@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+*.key
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+results/
+*.out.json
