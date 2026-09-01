@@ -1,0 +1,13 @@
+{
+  "name": "soclaas-experiments",
+  "private": true,
+  "description": "Delegating scripts only — the real package.json lives in web/",
+  "scripts": {
+    "dev": "npm --prefix web run dev",
+    "build": "npm --prefix web run build",
+    "start": "npm --prefix web run start",
+    "lint": "npm --prefix web run lint",
+    "install:web": "npm --prefix web install",
+    "test:forecaster": "python projects/forecaster/test_soclaas_forecast.py"
+  }
+}

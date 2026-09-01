@@ -1,12 +1,23 @@
+# secrets — this repo is public
 .env
 .env.*
 !.env.example
 *.key
 
+# python
 __pycache__/
 *.py[cod]
 .venv/
 venv/
 
+# node / next / vercel
+node_modules/
+.next/
+out/
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+
+# output
 results/
 *.out.json

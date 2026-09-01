@@ -37,8 +37,16 @@ class FakeUsage:
 class FakeResponse:
     """Mimics the shape run_one reads: .choices[0].message.content and .usage."""
 
-    def __init__(self, content: str | None, usage: FakeUsage | None = None) -> None:
-        message = type("Msg", (), {"content": content})()
+    def __init__(
+        self,
+        content: str | None,
+        usage: FakeUsage | None = None,
+        reasoning: str | None = None,
+    ) -> None:
+        attrs = {"content": content}
+        if reasoning is not None:
+            attrs["reasoning"] = reasoning
+        message = type("Msg", (), attrs)()
         choice = type("Choice", (), {"message": message})()
         self.choices = [choice]
         self.usage = usage if usage is not None else FakeUsage()
@@ -579,10 +587,98 @@ class TestLoadDotenv(unittest.TestCase):
         sf.load_dotenv(self.write("this line has no equals sign\nAFTER=ok\n"))
         self.assertEqual(os.environ["AFTER"], "ok")
 
+    def test_found_by_walking_up_from_cwd(self):
+        """One .env at a repo root must serve a project nested below it."""
+        nested = os.path.join(self.tmp, "projects", "forecaster")
+        os.makedirs(nested)
+        self.write("WALKED_UP=yes\n")  # .env sits at self.tmp, two levels above
+        os.environ.pop("WALKED_UP", None)
+        cwd = os.getcwd()
+        os.chdir(nested)
+        self.addCleanup(os.chdir, cwd)
+        self.assertEqual(sf.load_dotenv(), os.path.join(self.tmp, ".env"))
+        self.assertEqual(os.environ["WALKED_UP"], "yes")
+
+    def test_nearest_env_wins_when_walking_up(self):
+        nested = os.path.join(self.tmp, "child")
+        os.makedirs(nested)
+        self.write("WHICH=outer\n")
+        with open(os.path.join(nested, ".env"), "w", encoding="utf-8") as f:
+            f.write("WHICH=inner\n")
+        os.environ.pop("WHICH", None)
+        cwd = os.getcwd()
+        os.chdir(nested)
+        self.addCleanup(os.chdir, cwd)
+        sf.load_dotenv()
+        self.assertEqual(os.environ["WHICH"], "inner")
+
     def test_unmatched_quotes_left_alone(self):
         os.environ.pop("ODD", None)
         sf.load_dotenv(self.write("ODD=\"unclosed\n"))
         self.assertEqual(os.environ["ODD"], '"unclosed')
+
+
+# --------------------------------------------------------------------------
+# reasoning capture
+# --------------------------------------------------------------------------
+
+class TestReasoning(unittest.TestCase):
+    def test_reads_reasoning_field(self):
+        resp = FakeResponse(GOOD, reasoning="step one, step two")
+        self.assertEqual(sf.reasoning_of(resp), "step one, step two")
+
+    def test_reads_reasoning_content_spelling(self):
+        msg = type("Msg", (), {"content": GOOD, "reasoning_content": "thinking"})()
+        resp = type("R", (), {"choices": [type("C", (), {"message": msg})()]})()
+        self.assertEqual(sf.reasoning_of(resp), "thinking")
+
+    def test_absent_reasoning_is_none(self):
+        self.assertIsNone(sf.reasoning_of(FakeResponse(GOOD)))
+
+    def test_blank_reasoning_is_none(self):
+        self.assertIsNone(sf.reasoning_of(FakeResponse(GOOD, reasoning="   ")))
+
+    def test_malformed_response_is_none(self):
+        self.assertIsNone(sf.reasoning_of(object()))
+
+    def test_run_one_captures_reasoning(self):
+        client = FakeClient([FakeResponse(GOOD, reasoning="I reasoned about it.")])
+        r = sf.run_one(client, "qwen3.8:27b", "Will X?", "", 10)
+        self.assertEqual(r.status, "ok")
+        self.assertEqual(r.reasoning, "I reasoned about it.")
+
+    def test_reasoning_survives_when_raw_is_dropped(self):
+        """raw goes on success; reasoning must not go with it."""
+        client = FakeClient([FakeResponse(GOOD, reasoning="kept")])
+        r = sf.run_one(client, "m", "Will X?", "", 10)
+        self.assertIsNone(r.raw)
+        self.assertEqual(r.reasoning, "kept")
+
+    def test_repair_reasoning_preferred(self):
+        client = FakeClient(
+            [
+                FakeResponse("garbage", reasoning="first thoughts"),
+                FakeResponse(GOOD, reasoning="second thoughts"),
+            ]
+        )
+        r = sf.run_one(client, "m", "Will X?", "", 10)
+        self.assertEqual(r.reasoning, "second thoughts")
+
+    def test_first_reasoning_kept_when_repair_has_none(self):
+        client = FakeClient(
+            [FakeResponse("garbage", reasoning="first thoughts"), FakeResponse(GOOD)]
+        )
+        r = sf.run_one(client, "m", "Will X?", "", 10)
+        self.assertEqual(r.reasoning, "first thoughts")
+
+    def test_reasoning_absent_stays_none(self):
+        client = FakeClient([FakeResponse(GOOD)])
+        self.assertIsNone(sf.run_one(client, "m", "Will X?", "", 10).reasoning)
+
+    def test_reasoning_serialises(self):
+        client = FakeClient([FakeResponse(GOOD, reasoning="thinking out loud")])
+        r = sf.run_one(client, "m", "Will X?", "", 10)
+        self.assertIn("thinking out loud", json.dumps(asdict(r)))
 
 
 if __name__ == "__main__":

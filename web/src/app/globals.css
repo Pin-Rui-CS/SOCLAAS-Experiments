@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+/*
+ * One neutral palette, defined light-first, with dark values swapped under
+ * prefers-color-scheme. Every colour has its base definition on bare :root, so
+ * nothing depends on a media query having matched.
+ */
+:root {
+  --bg: #ffffff;
+  --bg-subtle: #f7f7f8;
+  --bg-raised: #ffffff;
+  --bg-hover: #ececee;
+  --bg-active: #e3e3e6;
+  --border: #e2e2e5;
+  --border-strong: #cfcfd4;
+  --text: #16161a;
+  --text-muted: #6b6b73;
+  --text-faint: #9a9aa3;
+  --accent: #2b5cff;
+  --accent-fg: #ffffff;
+  --accent-subtle: #eef2ff;
+  --danger: #c0392b;
+  --warn-bg: #fff8e6;
+  --warn-border: #f0d9a0;
+  --warn-text: #8a6100;
+
+  --sidebar-w: 260px;
+  --radius: 8px;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131316;
+    --bg-subtle: #0e0e10;
+    --bg-raised: #1a1a1f;
+    --bg-hover: #23232a;
+    --bg-active: #2c2c35;
+    --border: #2a2a31;
+    --border-strong: #3a3a44;
+    --text: #ededf0;
+    --text-muted: #a0a0aa;
+    --text-faint: #6e6e78;
+    --accent: #7b9bff;
+    --accent-fg: #10101a;
+    --accent-subtle: #1c2340;
+    --danger: #ff6b5b;
+    --warn-bg: #2a2213;
+    --warn-border: #4d3f1d;
+    --warn-text: #e0bd6b;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+/* Focus ring that is visible in both themes, only for keyboard users. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Wide content must scroll inside its own box, never the page. */
+pre {
+  overflow-x: auto;
+}

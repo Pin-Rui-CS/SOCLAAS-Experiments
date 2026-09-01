@@ -116,6 +116,7 @@ class RunResult:
     attempts: int = 0
     elapsed_s: float = 0.0
     usage: dict[str, int] = field(default_factory=dict)
+    reasoning: str | None = None     # the model's thinking, when it returns any
     raw: str | None = None           # kept on failure so the bad output survives
 
 
@@ -274,6 +275,25 @@ def usage_of(resp: Any) -> dict[str, int]:
     }
 
 
+def reasoning_of(resp: Any) -> str | None:
+    """Pull the model's thinking, when the gateway returns it separately.
+
+    Reasoning models put the argument in `reasoning` (some providers spell it
+    `reasoning_content`) and only the final JSON in `content`. Reading content
+    alone discards the majority of what was generated — and the only place the
+    actual reasoning is visible.
+    """
+    try:
+        msg = resp.choices[0].message
+    except (AttributeError, IndexError, TypeError):
+        return None
+    for attr in ("reasoning", "reasoning_content"):
+        val = getattr(msg, attr, None)
+        if isinstance(val, str) and val.strip():
+            return val
+    return None
+
+
 def run_one(
     client: OpenAI, model: str, question: str, brief: str, timeout: float
 ) -> RunResult:
@@ -294,6 +314,7 @@ def run_one(
         resp = call(client, model, messages, timeout)
         res.attempts = 1
         res.usage = usage_of(resp)
+        res.reasoning = reasoning_of(resp)
         raw = (resp.choices[0].message.content or "").strip()
         res.raw = raw
 
@@ -314,6 +335,7 @@ def run_one(
             res.repaired = True
             for k, v in usage_of(resp2).items():
                 res.usage[k] = res.usage.get(k, 0) + v
+            res.reasoning = reasoning_of(resp2) or res.reasoning
             raw2 = (resp2.choices[0].message.content or "").strip()
             res.raw = raw2
             res.forecast = validate(extract_json(raw2))
@@ -336,17 +358,25 @@ def run_one(
 def load_dotenv(path: str | None = None) -> str | None:
     """Read .env into the environment. Real env vars win; nothing is overwritten.
 
-    With no argument, looked for in the working directory first, then beside the
-    script, so the tool works when invoked from another directory. Returns the
-    file actually loaded, or None. Deliberately minimal: no interpolation, no
-    inline-comment stripping — a '#' inside a secret is a character, not a
-    comment.
+    With no argument, searched for by walking up from the working directory and
+    then from the script's own directory, so one .env at the repo root serves a
+    project nested several folders down. Returns the file actually loaded, or
+    None. Deliberately minimal: no interpolation, no inline-comment stripping —
+    a '#' inside a secret is a character, not a comment.
     """
     if path is not None:
         candidates = [path]
     else:
+        candidates = []
         here = os.path.dirname(os.path.abspath(__file__))
-        candidates = [os.path.join(os.getcwd(), ".env"), os.path.join(here, ".env")]
+        for start in (os.getcwd(), here):
+            d = start
+            while True:
+                candidates.append(os.path.join(d, ".env"))
+                parent = os.path.dirname(d)
+                if parent == d:  # filesystem root
+                    break
+                d = parent
 
     for path in candidates:
         if not os.path.isfile(path):
@@ -454,7 +484,8 @@ def main() -> int:
     for r in results:
         if r.status == "ok":
             flag = " (repaired)" if r.repaired else ""
-            print(f"  {r.model:<20} {r.probability:.3f}  {r.elapsed_s}s{flag}")
+            think = f"  +{len(r.reasoning):,}c reasoning" if r.reasoning else ""
+            print(f"  {r.model:<20} {r.probability:.3f}  {r.elapsed_s}s{flag}{think}")
         else:
             print(f"  {r.model:<20} FAILED   {r.elapsed_s}s  {r.error}")
 
