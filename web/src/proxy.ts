@@ -23,7 +23,20 @@ export async function proxy(request: NextRequest) {
 
   const token = request.cookies.get(SESSION_COOKIE)?.value;
   if (await verifySessionToken(token, secret)) {
-    return NextResponse.next();
+    const response = NextResponse.next();
+    /*
+     * Safety net, not the primary control.
+     *
+     * `export const dynamic = "force-dynamic"` on each gated page is what
+     * actually keeps them out of a shared cache — Next then sends
+     * `private, no-cache, no-store, max-age=0, must-revalidate` by itself. This
+     * line covers the case where a new page is added and that export is
+     * forgotten: a page Next considers static is sent with
+     * `s-maxage=31536000`, a year of SHARED-cache lifetime that a CDN will
+     * serve to anyone, signed in or not.
+     */
+    response.headers.set("Cache-Control", "private, no-store, must-revalidate");
+    return response;
   }
 
   // API routes get a status, not a redirect to an HTML page.
@@ -34,7 +47,10 @@ export async function proxy(request: NextRequest) {
   const login = new URL("/login", request.url);
   const { pathname, search } = request.nextUrl;
   if (pathname !== "/") login.searchParams.set("next", pathname + search);
-  return NextResponse.redirect(login);
+
+  const redirect = NextResponse.redirect(login);
+  redirect.headers.set("Cache-Control", "private, no-store, must-revalidate");
+  return redirect;
 }
 
 export const config = {

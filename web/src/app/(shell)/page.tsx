@@ -7,6 +7,9 @@ const STATUS_LABEL = {
   planned: "Planned",
 } as const;
 
+// Not prerendered: see the note in p/[slug]/page.tsx.
+export const dynamic = "force-dynamic";
+
 export default function IndexPage() {
   return (
     <div style={{ height: "100%", overflowY: "auto" }}>

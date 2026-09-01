@@ -1,10 +1,15 @@
 import { notFound } from "next/navigation";
-import { getProject, projects } from "@/projects/registry";
+import { getProject } from "@/projects/registry";
 import { ProjectView } from "@/components/shell/ProjectView";
 
-export function generateStaticParams() {
-  return projects.map((project) => ({ slug: project.slug }));
-}
+/*
+ * Deliberately NOT prerendered.
+ *
+ * A statically prerendered page is a file in Vercel's CDN, which is exactly
+ * the sort of thing that can be served without consulting the auth gate.
+ * Everything behind the password renders on demand instead.
+ */
+export const dynamic = "force-dynamic";
 
 export async function generateMetadata({
   params,
