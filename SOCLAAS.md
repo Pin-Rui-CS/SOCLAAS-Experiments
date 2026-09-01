@@ -134,8 +134,23 @@ outputs.
 **Tools.** Client-executed (returned to you, gateway does not run them): OpenAI
 function tools, custom tools, `shell` / `local_shell`, `apply_patch`.
 Gateway-executed web tools: `web_fetch`, `web_search`, `web_search_preview` —
-these work only if enabled globally *and* allowed by your key's policy. Forcing a
-disallowed one via `tool_choice` returns 403.
+documented as working only if enabled globally *and* allowed by your key's
+policy.
+
+> **Tested 2026-09-01: they are NOT implemented on this deployment.** Sending
+> `tools: [{"type": "web_search"}]` returns 200 with no `web_search_call` in the
+> output — the declaration is silently dropped and the model narrates a search
+> it never ran, which is worse than an error. Forcing one via `tool_choice`
+> returns 400, and the error leaks the reason: `/v1/responses` is translated
+> straight into chat/completions, and only `{"type": "function", "function":
+> {"name": ...}}` is understood. Treat the gateway as executing **no** tools.
+
+**Function calling does work**, on both endpoints. Tool definitions are forwarded
+and tool calls come back for you to execute. Verified on `llama3.1:8b`,
+`qwen3.6:35b`, `gemma4:26b`, and `qwen3.8:27b` — all four emit well-formed calls
+when `tool_choice` forces one. Unforced, the larger models often answer from
+memory instead, so a system prompt that says when to reach for a tool matters.
+Anything agentic here means running the tools yourself.
 
 ### POST /v1/embeddings
 

@@ -28,33 +28,31 @@ export function ModelPicker({
           padding: "5px 8px",
           background: "var(--bg-raised)",
           fontSize: 13,
-          maxWidth: 220,
+          maxWidth: 230,
         }}
       >
         {models.length === 0 && <option>Loading…</option>}
         {models.map((model) => (
           <option key={model.id} value={model.id}>
             {model.id}
-            {model.slow ? "  (slow)" : ""}
-            {model.alias ? "  (alias)" : ""}
+            {model.reasons ? "  (thinks first)" : ""}
           </option>
         ))}
       </select>
 
-      {selected?.slow && (
+      {selected?.reasons && (
         <span
-          title="Measured between 92 and 360 seconds for identical requests during testing."
+          title="This model reasons before answering. The thinking appears in its own panel, and the wait varies with the question — seconds for something easy, minutes for something hard."
           style={{
             fontSize: 11,
-            color: "var(--warn-text)",
-            background: "var(--warn-bg)",
-            border: "1px solid var(--warn-border)",
+            color: "var(--text-muted)",
+            border: "1px solid var(--border)",
             borderRadius: 4,
             padding: "1px 6px",
             whiteSpace: "nowrap",
           }}
         >
-          can take minutes
+          thinks before answering
         </span>
       )}
     </div>

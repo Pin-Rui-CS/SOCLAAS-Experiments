@@ -1,6 +1,6 @@
 /** Mirrors the shape returned by /api/models. */
 export type ModelInfo = {
   id: string;
-  slow: boolean;
-  alias: boolean;
+  /** Emits a separate reasoning stream before the answer. */
+  reasons: boolean;
 };

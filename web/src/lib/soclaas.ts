@@ -25,24 +25,49 @@ export function soclaas() {
 const NON_CHAT_MODELS = new Set(["bge-m3", "whisper-large-v3"]);
 
 /**
- * Operator-managed aliases. They work, but they point at whatever the operator
- * has chosen today, so pinning a real ID is better for reproducibility.
+ * Operator-managed aliases, hidden from the picker.
+ *
+ * Each is a duplicate of a model already in the list — matched by context
+ * window, exact pricing, and description:
+ *
+ *   default         -> qwen3.6:35b
+ *   advanced-vision -> qwen3-vl:32b
+ *   test            -> qwen3-vl:32b
+ *   coding          -> qwen3.6:27b / qwen3.8:27b  (NOT qwen3-coder-next,
+ *                      despite the name — that model prices differently)
+ *
+ * They add nothing but confusion, and the operator can repoint them at any
+ * time, so a conversation held with "default" is not reproducible.
  */
 const ALIASES = new Set(["default", "coding", "advanced-vision", "test"]);
 
 /**
- * Models measured as very slow. `qwen3.8:27b` took between 92 and 360 seconds
- * for identical requests during testing, so the UI warns before you pick one.
+ * Models that emit a separate `reasoning` field before answering.
+ *
+ * Measured, not guessed: each was asked "what is 12 times 8" and checked for a
+ * reasoning field. This is the difference a user actually feels — these fill
+ * the thinking panel and take variable time, from seconds on an easy question
+ * to minutes on a hard one (qwen3.8:27b once took 360s).
+ *
+ * Note it is NOT about model size. qwen3.6:35b is one of the largest here and
+ * does no visible reasoning at all, answering in well under a second.
  */
-const SLOW_MODELS = new Set(["qwen3.8:27b", "qwen3.6:35b", "ornith1.5:35b", "ornith1.0:35b"]);
+const REASONING_MODELS = new Set([
+  "qwen3.5:9b",
+  "gemma4:26b",
+  "qwen3.6:27b",
+  "qwen3.8:27b",
+  "ornith1.0:35b",
+  "ornith1.5:35b",
+]);
 
 /** Preferred default, in order — fast models first. */
 const DEFAULT_PREFERENCE = ["llama3.1:8b", "qwen3.5:9b", "gemma4:26b"];
 
 export type ModelInfo = {
   id: string;
-  slow: boolean;
-  alias: boolean;
+  /** Emits a separate reasoning stream before the answer. */
+  reasons: boolean;
 };
 
 export async function listModels(): Promise<ModelInfo[]> {
@@ -60,14 +85,17 @@ export async function listModels(): Promise<ModelInfo[]> {
 
   return (body.data ?? [])
     .map((model) => model.id)
-    .filter((id): id is string => typeof id === "string" && !NON_CHAT_MODELS.has(id))
+    .filter(
+      (id): id is string =>
+        typeof id === "string" && !NON_CHAT_MODELS.has(id) && !ALIASES.has(id),
+    )
     .sort((a, b) => a.localeCompare(b))
-    .map((id) => ({ id, slow: SLOW_MODELS.has(id), alias: ALIASES.has(id) }));
+    .map((id) => ({ id, reasons: REASONING_MODELS.has(id) }));
 }
 
 export function pickDefaultModel(models: ModelInfo[]): string | undefined {
   for (const preferred of DEFAULT_PREFERENCE) {
     if (models.some((model) => model.id === preferred)) return preferred;
   }
-  return models.find((model) => !model.alias && !model.slow)?.id ?? models[0]?.id;
+  return models.find((model) => !model.reasons)?.id ?? models[0]?.id;
 }
