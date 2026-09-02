@@ -61,6 +61,24 @@ const REASONING_MODELS = new Set([
   "ornith1.5:35b",
 ]);
 
+/**
+ * Models confirmed to emit well-formed tool calls.
+ *
+ * Measured, like REASONING_MODELS above: each of these was given a tool
+ * definition and produced a valid call (SOCLAAS.md, 2026-09-01). The gateway
+ * itself executes nothing — it only forwards definitions and returns calls —
+ * so this is purely about whether the model can be trusted to emit one.
+ *
+ * A model missing from this list is not known to be broken, only unverified.
+ * Add it once you have actually watched it call a tool.
+ */
+const TOOL_MODELS = new Set([
+  "llama3.1:8b",
+  "gemma4:26b",
+  "qwen3.6:35b",
+  "qwen3.8:27b",
+]);
+
 /** Preferred default, in order — fast models first. */
 const DEFAULT_PREFERENCE = ["llama3.1:8b", "qwen3.5:9b", "gemma4:26b"];
 
@@ -68,7 +86,13 @@ export type ModelInfo = {
   id: string;
   /** Emits a separate reasoning stream before the answer. */
   reasons: boolean;
+  /** Verified to emit well-formed tool calls, so web access can be offered. */
+  tools: boolean;
 };
+
+export function supportsTools(model: string): boolean {
+  return TOOL_MODELS.has(model);
+}
 
 export async function listModels(): Promise<ModelInfo[]> {
   const response = await fetch(`${env.soclaasBaseUrl}/models`, {
@@ -90,7 +114,11 @@ export async function listModels(): Promise<ModelInfo[]> {
         typeof id === "string" && !NON_CHAT_MODELS.has(id) && !ALIASES.has(id),
     )
     .sort((a, b) => a.localeCompare(b))
-    .map((id) => ({ id, reasons: REASONING_MODELS.has(id) }));
+    .map((id) => ({
+      id,
+      reasons: REASONING_MODELS.has(id),
+      tools: TOOL_MODELS.has(id),
+    }));
 }
 
 export function pickDefaultModel(models: ModelInfo[]): string | undefined {
@@ -98,4 +126,76 @@ export function pickDefaultModel(models: ModelInfo[]): string | undefined {
     if (models.some((model) => model.id === preferred)) return preferred;
   }
   return models.find((model) => !model.reasons)?.id ?? models[0]?.id;
+}
+
+/**
+ * Budget lives on the PORTAL, a different host from the gateway, and is not
+ * part of the OpenAI-compatible surface. Not derived from `soclaasBaseUrl`.
+ */
+const BUDGET_URL = "https://soclaas-portal.comp.nus.edu.sg/api-key/budget";
+
+/** All spend figures are microdollars — 1e6 to the dollar. */
+export type Budget = {
+  daySpend: number;
+  dayAllowance: number;
+  monthSpend: number;
+  monthAllowance: number;
+  requestsPerMinute: number;
+  /** Start of the current UTC day window, ISO. */
+  dayStart: string | null;
+};
+
+type BudgetResponse = {
+  policy?: {
+    requests_per_minute_limit?: number;
+    daily_microdollar_allowance?: number;
+    monthly_microdollar_allowance?: number;
+  };
+  effective_limits?: {
+    daily_microdollar_allowance?: number;
+    monthly_microdollar_allowance?: number;
+  };
+  usage?: { current_day_spend?: number; current_month_spend?: number };
+  windows?: { day_start?: string };
+};
+
+/**
+ * Remaining quota for the key this site runs on.
+ *
+ * Deliberately returns a narrow shape rather than the raw body: the response
+ * also carries `api_key.name` and `api_key.prefix`, which identify the key and
+ * have no business reaching a browser.
+ *
+ * `effective_limits` wins over `policy` for allowances — it is what the gateway
+ * actually enforces once caps are applied — but the request-rate limit appears
+ * only under `policy`.
+ */
+export async function fetchBudget(): Promise<Budget> {
+  const response = await fetch(BUDGET_URL, {
+    headers: { Authorization: `Bearer ${env.soclaasApiKey}` },
+    // Spend moves with every request, but a chip in the sidebar does not need
+    // to be exact; a minute keeps this off the critical path of every page.
+    next: { revalidate: 60 },
+  });
+
+  if (!response.ok) {
+    throw new Error(`portal returned ${response.status} for /api-key/budget`);
+  }
+
+  const body = (await response.json()) as BudgetResponse;
+
+  return {
+    daySpend: body.usage?.current_day_spend ?? 0,
+    dayAllowance:
+      body.effective_limits?.daily_microdollar_allowance ??
+      body.policy?.daily_microdollar_allowance ??
+      0,
+    monthSpend: body.usage?.current_month_spend ?? 0,
+    monthAllowance:
+      body.effective_limits?.monthly_microdollar_allowance ??
+      body.policy?.monthly_microdollar_allowance ??
+      0,
+    requestsPerMinute: body.policy?.requests_per_minute_limit ?? 0,
+    dayStart: body.windows?.day_start ?? null,
+  };
 }

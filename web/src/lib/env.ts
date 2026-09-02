@@ -24,6 +24,14 @@ function required(name: string): string {
   return value;
 }
 
+/**
+ * For features that switch themselves off when unconfigured, rather than
+ * failing. Web search is optional: no key means no toggle, not a broken site.
+ */
+function optional(name: string): string | undefined {
+  return process.env[name] || undefined;
+}
+
 export const env = {
   get soclaasApiKey() {
     return required("SOCLAAS_API_KEY");
@@ -36,5 +44,23 @@ export const env = {
   },
   get authSecret() {
     return required("AUTH_SECRET");
+  },
+
+  /* --- Web search, all optional -------------------------------------------
+   * Whichever of these is set decides the provider; see lib/search.ts. The
+   * choice is configuration, not code, so it can be changed without a deploy
+   * touching anything but environment variables.
+   */
+  get tavilyApiKey() {
+    return optional("TAVILY_API_KEY");
+  },
+  get braveApiKey() {
+    return optional("BRAVE_SEARCH_API_KEY");
+  },
+  get googleSearchApiKey() {
+    return optional("GOOGLE_SEARCH_API_KEY");
+  },
+  get googleSearchCx() {
+    return optional("GOOGLE_SEARCH_CX");
   },
 };

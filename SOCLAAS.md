@@ -232,11 +232,17 @@ Picking one:
 
 ## Usage limits
 
-Defaults:
+Documented defaults:
 
 - 90 requests per minute
 - 80,000,000 microdollars ($80) per day
 - 800,000,000 microdollars ($800) per month
+
+> **Do not trust those numbers.** Measured against a real key on 2026-09-02, the
+> `default` policy actually returns **30 requests/minute, $50/day, $500/month** —
+> well under what the docs advertise. Read the budget endpoint below rather than
+> assuming; the rate limit in particular matters as soon as one user action costs
+> several requests, as any tool-calling loop does.
 
 Also constrained by lifetime credits and model-level access policy. Exceeding any
 limit rejects the request (429).

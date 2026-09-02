@@ -2,9 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport, type UIMessage } from "ai";
+import {
+  DefaultChatTransport,
+  getToolName,
+  isToolUIPart,
+  type UIMessage,
+} from "ai";
 import { Markdown } from "./components/Markdown";
 import { ReasoningPanel } from "./components/ReasoningPanel";
+import { SavedSources, ToolPanel } from "./components/ToolPanel";
 import { Composer } from "./components/Composer";
 import { ModelPicker } from "./components/ModelPicker";
 import type { ModelInfo } from "./types";
@@ -20,25 +26,37 @@ import {
 } from "./storage";
 
 const MODEL_STORAGE_KEY = "soclaas.chat.model";
+const WEB_STORAGE_KEY = "soclaas.chat.web";
 
 export default function ChatView() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [model, setModel] = useState("");
   const [modelError, setModelError] = useState<string | null>(null);
+  const [searchProvider, setSearchProvider] = useState<string | null>(null);
+  const [web, setWeb] = useState(false);
   const [input, setInput] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationId, setConversationId] = useState<string>(newConversationId);
 
-  // `model` is read inside the transport body callback, which is created once.
-  // A ref keeps that callback reading the current value without rebuilding it.
-  const modelRef = useRef(model);
-  modelRef.current = model;
+  /*
+   * The transport is built once, but its body callback has to see current
+   * values — including on `regenerate()`, which is why this cannot simply be
+   * passed at sendMessage time.
+   *
+   * Written in an effect rather than during render: the callback only ever runs
+   * from a request, which is always after the commit, and assigning during
+   * render is the pattern React warns about.
+   */
+  const requestRef = useRef({ model, web });
+  useEffect(() => {
+    requestRef.current = { model, web };
+  }, [model, web]);
 
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: "/api/projects/chat",
-        body: () => ({ model: modelRef.current }),
+        body: () => ({ ...requestRef.current }),
       }),
     [],
   );
@@ -65,6 +83,8 @@ export default function ChatView() {
         }
 
         setModels(body.models ?? []);
+        setSearchProvider(body.searchProvider ?? null);
+
         const remembered = (() => {
           try {
             return localStorage.getItem(MODEL_STORAGE_KEY);
@@ -79,6 +99,16 @@ export default function ChatView() {
             ? remembered
             : (body.defaultModel ?? available[0]?.id ?? ""),
         );
+
+        // Only restore the web preference if the server still has a provider;
+        // otherwise a stored `true` would show as on and silently do nothing.
+        if (body.searchProvider) {
+          try {
+            setWeb(localStorage.getItem(WEB_STORAGE_KEY) === "1");
+          } catch {
+            /* storage blocked; defaults to off */
+          }
+        }
       } catch {
         if (!cancelled) setModelError("Could not reach the server.");
       }
@@ -93,6 +123,15 @@ export default function ChatView() {
     setModel(next);
     try {
       localStorage.setItem(MODEL_STORAGE_KEY, next);
+    } catch {
+      /* storage blocked; the choice just won't be remembered */
+    }
+  }, []);
+
+  const chooseWeb = useCallback((next: boolean) => {
+    setWeb(next);
+    try {
+      localStorage.setItem(WEB_STORAGE_KEY, next ? "1" : "0");
     } catch {
       /* storage blocked; the choice just won't be remembered */
     }
@@ -206,6 +245,10 @@ export default function ChatView() {
         onStop={stop}
         busy={busy}
         disabled={!model && !modelError}
+        web={web}
+        onWebChange={chooseWeb}
+        webProvider={searchProvider}
+        webSupported={models.find((m) => m.id === model)?.tools ?? false}
       />
     </div>
   );
@@ -445,16 +488,6 @@ function MessageList({ messages, busy }: { messages: UIMessage[]; busy: boolean 
           const isLast = index === messages.length - 1;
           const streaming = busy && isLast && message.role === "assistant";
 
-          const reasoning = message.parts
-            .filter((p) => p.type === "reasoning")
-            .map((p) => (p as { text: string }).text)
-            .join("");
-
-          const text = message.parts
-            .filter((p) => p.type === "text")
-            .map((p) => (p as { text: string }).text)
-            .join("");
-
           if (message.role === "user") {
             return (
               <div
@@ -472,22 +505,73 @@ function MessageList({ messages, busy }: { messages: UIMessage[]; busy: boolean 
                     wordBreak: "break-word",
                   }}
                 >
-                  {text}
+                  {message.parts
+                    .filter((p) => p.type === "text")
+                    .map((p) => (p as { text: string }).text)
+                    .join("")}
                 </div>
               </div>
             );
           }
 
+          /*
+           * Rendered in ORDER, not sorted into buckets.
+           *
+           * A turn with tools interleaves: think, search, read, think, answer.
+           * Joining all the text and all the reasoning would collapse that into
+           * a shape the model never produced — and would drop tool parts on the
+           * floor entirely, leaving a blank message for the whole search.
+           */
+          const renderable = message.parts.filter(
+            (part) =>
+              part.type === "text" ||
+              part.type === "reasoning" ||
+              isToolUIPart(part),
+          );
+
           return (
             <div key={message.id} style={{ margin: "0 0 22px" }}>
-              {reasoning && (
-                <ReasoningPanel text={reasoning} streaming={streaming && !text} />
-              )}
-              {text ? (
-                <Markdown>{text}</Markdown>
-              ) : (
-                streaming && !reasoning && <Waiting />
-              )}
+              {renderable.map((part, partIndex) => {
+                const key = `${message.id}:${partIndex}`;
+                const isLastPart = partIndex === renderable.length - 1;
+
+                if (part.type === "reasoning") {
+                  return (
+                    <ReasoningPanel
+                      key={key}
+                      text={part.text}
+                      streaming={streaming && isLastPart}
+                    />
+                  );
+                }
+
+                if (part.type === "text") {
+                  return <Markdown key={key}>{part.text}</Markdown>;
+                }
+
+                return (
+                  <ToolPanel
+                    key={key}
+                    tool={getToolName(part)}
+                    state={part.state}
+                    input={part.input}
+                    output={"output" in part ? part.output : undefined}
+                    errorText={"errorText" in part ? part.errorText : undefined}
+                  />
+                );
+              })}
+
+              {/* Only present on a reopened conversation; live turns show
+                * ToolPanel above instead. */}
+              <SavedSources
+                sources={message.parts.flatMap((part) =>
+                  part.type === "source-url"
+                    ? [{ url: part.url, title: part.title }]
+                    : [],
+                )}
+              />
+
+              {renderable.length === 0 && streaming && <Waiting />}
             </div>
           );
         })}

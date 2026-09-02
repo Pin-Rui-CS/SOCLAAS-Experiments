@@ -9,6 +9,10 @@ export function Composer({
   onStop,
   busy,
   disabled,
+  web,
+  onWebChange,
+  webProvider,
+  webSupported,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -16,6 +20,13 @@ export function Composer({
   onStop: () => void;
   busy: boolean;
   disabled: boolean;
+  /** Whether the next message may use web tools. */
+  web: boolean;
+  onWebChange: (web: boolean) => void;
+  /** Name of the configured search provider, or null if none is set up. */
+  webProvider: string | null;
+  /** Whether the selected model is verified to emit tool calls. */
+  webSupported: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -73,6 +84,42 @@ export function Composer({
             }}
           />
 
+          {/*
+            * Hidden entirely when no search provider is configured — offering a
+            * switch that cannot work is worse than not offering one.
+            */}
+          {webProvider && (
+            <button
+              type="button"
+              onClick={() => onWebChange(!web)}
+              disabled={busy || !webSupported}
+              aria-pressed={web && webSupported}
+              title={
+                webSupported
+                  ? `Let the model search and read the web via ${webProvider}. It decides whether a search actually helps.`
+                  : "This model is not verified to emit tool calls, so web access is unavailable for it. Pick another model."
+              }
+              style={{
+                flexShrink: 0,
+                padding: "7px 12px",
+                borderRadius: 8,
+                fontSize: 13,
+                cursor: busy || !webSupported ? "default" : "pointer",
+                opacity: webSupported ? 1 : 0.4,
+                border: `1px solid ${
+                  web && webSupported ? "var(--accent)" : "var(--border-strong)"
+                }`,
+                background:
+                  web && webSupported ? "var(--accent-subtle)" : "transparent",
+                color:
+                  web && webSupported ? "var(--text)" : "var(--text-muted)",
+                fontWeight: web && webSupported ? 550 : 450,
+              }}
+            >
+              Web
+            </button>
+          )}
+
           {busy ? (
             <button
               type="button"
@@ -119,8 +166,10 @@ export function Composer({
             textAlign: "center",
           }}
         >
-          Enter to send, Shift+Enter for a new line. Open-weight models make
-          things up — check anything that matters.
+          Enter to send, Shift+Enter for a new line.{" "}
+          {web && webSupported && webProvider
+            ? "With the web on, a model can cite a real page and still misread it — open the sources."
+            : "Open-weight models make things up — check anything that matters."}
         </p>
       </div>
     </div>

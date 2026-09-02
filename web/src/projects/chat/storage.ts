@@ -1,4 +1,4 @@
-import type { UIMessage } from "ai";
+import { getToolName, isToolUIPart, type UIMessage } from "ai";
 
 /**
  * Conversation persistence in localStorage.
@@ -10,6 +10,17 @@ import type { UIMessage } from "ai";
  * for the session and disappears on reload, which is a deliberate trade rather
  * than an oversight.
  *
+ * Sources ARE persisted, and the reasoning argument deliberately does not carry
+ * over to them. A source list is about a hundred bytes a link, and it is the
+ * evidence: an answer that survives a reload still citing pages you can no
+ * longer see is worse than one that never cited any, because it still reads as
+ * grounded. Raw tool output is dropped — only the links survive.
+ *
+ * They are stored as `source-url` parts, which is a real UIMessage part type.
+ * That matters because a reopened conversation gets sent back to the model on
+ * the next turn: `convertToModelMessages` filters parts through an allowlist and
+ * skips these, so they round-trip without reaching its unsupported-part throw.
+ *
  * Every access is wrapped: private windows, cleared site data, and browsers
  * configured to block storage all throw here, and none of them should stop the
  * page rendering.
@@ -18,7 +29,9 @@ import type { UIMessage } from "ai";
 const KEY = "soclaas.chat.conversations.v1";
 const MAX_CONVERSATIONS = 50;
 
-export type PersistedPart = { type: "text"; text: string };
+export type PersistedPart =
+  | { type: "text"; text: string }
+  | { type: "source-url"; sourceId: string; url: string; title?: string };
 
 export type PersistedMessage = {
   id: string;
@@ -34,15 +47,54 @@ export type Conversation = {
   messages: PersistedMessage[];
 };
 
-/** Drop everything that isn't durable text — reasoning above all. */
+/** The URLs a completed tool call actually produced. */
+function sourcesOf(tool: string, output: unknown): Array<{ url: string; title?: string }> {
+  if (tool === "web_search") {
+    const results =
+      (output as { results?: Array<{ url?: string; title?: string }> } | undefined)
+        ?.results ?? [];
+    return results.flatMap((result) =>
+      result.url ? [{ url: result.url, title: result.title }] : [],
+    );
+  }
+
+  if (tool === "web_fetch") {
+    const page = output as { url?: string; title?: string } | undefined;
+    return page?.url ? [{ url: page.url, title: page.title }] : [];
+  }
+
+  return [];
+}
+
+/** Keep text and the links behind it; drop reasoning and raw tool output. */
 export function stripForStorage(messages: UIMessage[]): PersistedMessage[] {
-  return messages.map((message) => ({
-    id: message.id,
-    role: message.role,
-    parts: message.parts
-      .filter((part): part is { type: "text"; text: string } => part.type === "text")
-      .map((part) => ({ type: "text" as const, text: part.text })),
-  }));
+  return messages.map((message) => {
+    const parts: PersistedPart[] = [];
+    const seen = new Set<string>();
+
+    for (const part of message.parts) {
+      if (part.type === "text") {
+        parts.push({ type: "text", text: part.text });
+        continue;
+      }
+
+      // Only settled calls have anything worth keeping.
+      if (!isToolUIPart(part) || part.state !== "output-available") continue;
+
+      for (const source of sourcesOf(getToolName(part), part.output)) {
+        if (seen.has(source.url)) continue;
+        seen.add(source.url);
+        parts.push({
+          type: "source-url",
+          sourceId: source.url,
+          url: source.url,
+          title: source.title,
+        });
+      }
+    }
+
+    return { id: message.id, role: message.role, parts };
+  });
 }
 
 export function toUIMessages(messages: PersistedMessage[]): UIMessage[] {
@@ -55,7 +107,11 @@ export function toUIMessages(messages: PersistedMessage[]): UIMessage[] {
 
 export function titleFrom(messages: PersistedMessage[]): string {
   const firstUser = messages.find((m) => m.role === "user");
-  const text = firstUser?.parts.map((p) => p.text).join(" ").trim() ?? "";
+  const text =
+    firstUser?.parts
+      .flatMap((p) => (p.type === "text" ? [p.text] : []))
+      .join(" ")
+      .trim() ?? "";
   if (!text) return "New chat";
   return text.length > 48 ? `${text.slice(0, 48).trimEnd()}…` : text;
 }

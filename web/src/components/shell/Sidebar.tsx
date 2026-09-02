@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { projects, type ProjectStatus } from "@/projects/registry";
@@ -130,10 +131,71 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           alignItems: "center",
         }}
       >
-        <span>NUS SoC gateway</span>
+        <BudgetChip />
         <LogoutButton />
       </div>
     </nav>
+  );
+}
+
+type Budget = {
+  daySpend: number;
+  dayAllowance: number;
+  monthSpend: number;
+  monthAllowance: number;
+  requestsPerMinute: number;
+};
+
+/** Microdollars to something readable. 1e6 microdollars = $1. */
+function dollars(microdollars: number): string {
+  const value = microdollars / 1e6;
+  if (value === 0) return "$0";
+  if (value < 0.01) return "<$0.01";
+  return `$${value.toFixed(2)}`;
+}
+
+/**
+ * Spend against the daily allowance.
+ *
+ * Falls back to the plain gateway label on any failure. The portal is a
+ * different host from the gateway and can be down while chat works fine —
+ * a missing chip must never look like a broken site.
+ */
+function BudgetChip() {
+  const [budget, setBudget] = useState<Budget | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const response = await fetch("/api/budget");
+        if (!response.ok) return;
+        const body = (await response.json()) as Budget;
+        if (!cancelled) setBudget(body);
+      } catch {
+        /* portal unreachable; the label stays as it was */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!budget) return <span>NUS SoC gateway</span>;
+
+  return (
+    <span
+      title={
+        `Today: ${dollars(budget.daySpend)} of ${dollars(budget.dayAllowance)}\n` +
+        `This month: ${dollars(budget.monthSpend)} of ${dollars(budget.monthAllowance)}\n` +
+        `${budget.requestsPerMinute} requests/min\n` +
+        `Windows reset at 00:00 UTC (08:00 SGT).`
+      }
+    >
+      {dollars(budget.daySpend)} / {dollars(budget.dayAllowance)} today
+    </span>
   );
 }
 
