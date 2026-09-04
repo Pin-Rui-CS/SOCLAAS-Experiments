@@ -27,12 +27,26 @@ import {
 
 const MODEL_STORAGE_KEY = "soclaas.chat.model";
 const WEB_STORAGE_KEY = "soclaas.chat.web";
+const SEARCH_PROVIDER_STORAGE_KEY = "soclaas.chat.searchProvider";
+
+/**
+ * Announces a provider change to the rest of the shell.
+ *
+ * The sidebar's quota chip has to follow this selection, and it lives outside
+ * this project's tree — projects never import each other, and a shared context
+ * for one string would be more machinery than it deserves. A window event plus
+ * localStorage keeps both in step without either knowing about the other.
+ */
+export const SEARCH_PROVIDER_EVENT = "soclaas:search-provider";
 
 export default function ChatView() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [model, setModel] = useState("");
   const [modelError, setModelError] = useState<string | null>(null);
-  const [searchProvider, setSearchProvider] = useState<string | null>(null);
+  const [searchProviders, setSearchProviders] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
+  const [searchProviderId, setSearchProviderId] = useState("");
   const [web, setWeb] = useState(false);
   const [input, setInput] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -47,10 +61,10 @@ export default function ChatView() {
    * from a request, which is always after the commit, and assigning during
    * render is the pattern React warns about.
    */
-  const requestRef = useRef({ model, web });
+  const requestRef = useRef({ model, web, searchProvider: searchProviderId });
   useEffect(() => {
-    requestRef.current = { model, web };
-  }, [model, web]);
+    requestRef.current = { model, web, searchProvider: searchProviderId };
+  }, [model, web, searchProviderId]);
 
   const transport = useMemo(
     () =>
@@ -83,7 +97,10 @@ export default function ChatView() {
         }
 
         setModels(body.models ?? []);
-        setSearchProvider(body.searchProvider ?? null);
+
+        const providers: Array<{ id: string; name: string }> =
+          body.searchProviders ?? [];
+        setSearchProviders(providers);
 
         const remembered = (() => {
           try {
@@ -102,11 +119,21 @@ export default function ChatView() {
 
         // Only restore the web preference if the server still has a provider;
         // otherwise a stored `true` would show as on and silently do nothing.
-        if (body.searchProvider) {
+        if (providers.length > 0) {
           try {
             setWeb(localStorage.getItem(WEB_STORAGE_KEY) === "1");
+
+            // A remembered provider whose key has since been removed must not
+            // stick: fall back to the server's first, which is what the route
+            // would use anyway.
+            const storedProvider = localStorage.getItem(SEARCH_PROVIDER_STORAGE_KEY);
+            setSearchProviderId(
+              storedProvider && providers.some((p) => p.id === storedProvider)
+                ? storedProvider
+                : providers[0].id,
+            );
           } catch {
-            /* storage blocked; defaults to off */
+            setSearchProviderId(providers[0].id);
           }
         }
       } catch {
@@ -135,6 +162,17 @@ export default function ChatView() {
     } catch {
       /* storage blocked; the choice just won't be remembered */
     }
+  }, []);
+
+  const chooseSearchProvider = useCallback((next: string) => {
+    setSearchProviderId(next);
+    try {
+      localStorage.setItem(SEARCH_PROVIDER_STORAGE_KEY, next);
+    } catch {
+      /* storage blocked; the choice just won't be remembered */
+    }
+    // Tell the sidebar chip to show this provider's quota instead.
+    window.dispatchEvent(new CustomEvent(SEARCH_PROVIDER_EVENT, { detail: next }));
   }, []);
 
   /* --------------------------------------------------------- conversations */
@@ -247,7 +285,9 @@ export default function ChatView() {
         disabled={!model && !modelError}
         web={web}
         onWebChange={chooseWeb}
-        webProvider={searchProvider}
+        webProviders={searchProviders}
+        webProvider={searchProviderId}
+        onWebProviderChange={chooseSearchProvider}
         webSupported={models.find((m) => m.id === model)?.tools ?? false}
       />
     </div>

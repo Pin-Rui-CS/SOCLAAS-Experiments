@@ -79,12 +79,14 @@ export async function POST(request: Request) {
   let messages: UIMessage[];
   let model: string;
   let web = false;
+  let searchProviderId: string | undefined;
 
   try {
     const body = (await request.json()) as {
       messages?: UIMessage[];
       model?: unknown;
       web?: unknown;
+      searchProvider?: unknown;
     };
     if (!Array.isArray(body.messages)) throw new Error("messages must be an array");
     if (typeof body.model !== "string" || !body.model) {
@@ -93,6 +95,8 @@ export async function POST(request: Request) {
     messages = body.messages;
     model = body.model;
     web = body.web === true;
+    searchProviderId =
+      typeof body.searchProvider === "string" ? body.searchProvider : undefined;
   } catch (error) {
     return Response.json(
       { error: error instanceof Error ? error.message : "malformed request" },
@@ -104,8 +108,12 @@ export async function POST(request: Request) {
    * Three independent conditions, all required. The client hides the toggle
    * when search is unconfigured or the model is unverified, but the client is
    * not the authority on either.
+   *
+   * The requested provider is likewise a preference, not a command:
+   * getSearchProvider falls back to the default if the name is unknown, so a
+   * stale choice in someone's localStorage cannot break a turn.
    */
-  const provider = web ? getSearchProvider() : null;
+  const provider = web ? getSearchProvider(searchProviderId) : null;
   const tools = provider && supportsTools(model) ? createWebTools(provider) : undefined;
 
   const result = streamText({

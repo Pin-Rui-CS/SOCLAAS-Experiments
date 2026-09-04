@@ -57,10 +57,4 @@ export const env = {
   get braveApiKey() {
     return optional("BRAVE_SEARCH_API_KEY");
   },
-  get googleSearchApiKey() {
-    return optional("GOOGLE_SEARCH_API_KEY");
-  },
-  get googleSearchCx() {
-    return optional("GOOGLE_SEARCH_CX");
-  },
 };
