@@ -201,6 +201,81 @@ function hostOf(url: string): string {
   }
 }
 
+export type TurnCost = {
+  web?: boolean;
+  searchProvider?: string;
+  searchProviderId?: string;
+  /** Searches started, including failed ones. */
+  attempted?: number;
+  searches?: number;
+  pagesRead?: number;
+  credits?: number;
+  totalTokens?: number;
+};
+
+/** "search" pluralises irregularly, so it gets its own word rather than +"s". */
+function count(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/**
+ * What the turn cost, under the answer that cost it.
+ *
+ * Deliberately spells searches and pages out separately rather than reporting
+ * one number. Only searching is billed — reading is our own HTTP client, not a
+ * provider's extract endpoint — and seeing "3 pages read · 1 credit" is what
+ * teaches that. A single combined figure would hide it.
+ *
+ * Clauses are built by omission, so a turn that never touched the web shows
+ * tokens alone rather than a row of zeroes. Two cases are stated explicitly
+ * instead, because silence would misrepresent them:
+ *
+ *  - used the web but spent nothing  -> "no credits"
+ *  - tried to search and it failed   -> "0 searches · no credits"
+ *
+ * The second needs `attempted`: a model that chose not to search and a search
+ * that errored both leave `searches` at zero, and they mean opposite things.
+ */
+export function TurnCostLine({ cost }: { cost: TurnCost | undefined }) {
+  if (!cost) return null;
+
+  const { web, searchProvider, totalTokens } = cost;
+  const attempted = cost.attempted ?? 0;
+  const searches = cost.searches ?? 0;
+  const pagesRead = cost.pagesRead ?? 0;
+  const credits = cost.credits ?? 0;
+
+  const parts: string[] = [];
+
+  if (web) {
+    if (searches > 0) parts.push(count(searches, "search", "searches"));
+    if (pagesRead > 0) parts.push(`${count(pagesRead, "page", "pages")} read`);
+
+    if (credits > 0) {
+      // Name the provider only when it actually charged for something.
+      parts.push(count(credits, `${searchProvider ?? "search"} credit`, `${searchProvider ?? "search"} credits`));
+    } else if (pagesRead > 0) {
+      parts.push("no credits");
+    } else if (attempted > 0) {
+      // Searched, and every attempt failed. Say so rather than showing nothing,
+      // which would look identical to not having searched at all.
+      parts.push("0 searches", "no credits");
+    }
+  }
+
+  if (typeof totalTokens === "number") {
+    parts.push(`${totalTokens.toLocaleString()} tokens`);
+  }
+
+  if (parts.length === 0) return null;
+
+  return (
+    <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-faint)" }}>
+      {parts.join(" · ")}
+    </div>
+  );
+}
+
 /**
  * Sources on a REOPENED conversation.
  *

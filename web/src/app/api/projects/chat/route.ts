@@ -114,7 +114,9 @@ export async function POST(request: Request) {
    * stale choice in someone's localStorage cannot break a turn.
    */
   const provider = web ? getSearchProvider(searchProviderId) : null;
-  const tools = provider && supportsTools(model) ? createWebTools(provider) : undefined;
+  const webTools =
+    provider && supportsTools(model) ? createWebTools(provider) : undefined;
+  const tools = webTools?.tools;
 
   const result = streamText({
     model: soclaas()(model),
@@ -159,19 +161,33 @@ export async function POST(request: Request) {
     // for reasoning models it is the bulk of what was generated, and the only
     // place the actual derivation is visible.
     sendReasoning: true,
-    // Token usage per turn, so spend is visible before there is anywhere to
-    // store it. The gateway forces `include_usage` upstream on streams, so this
-    // survives streaming.
-    messageMetadata: ({ part }) =>
-      part.type === "finish"
-        ? {
-            model,
-            web: Boolean(tools),
-            inputTokens: part.totalUsage?.inputTokens,
-            outputTokens: part.totalUsage?.outputTokens,
-            totalTokens: part.totalUsage?.totalTokens,
-          }
-        : undefined,
+    /*
+     * What the turn cost, reported once at the end.
+     *
+     * Tokens come from the gateway, which forces `include_usage` upstream on
+     * streams so they survive streaming. Search counts come from the tool
+     * closure, read here because `finish` is the only point at which the loop
+     * is definitely over and the tally is final.
+     */
+    messageMetadata: ({ part }) => {
+      if (part.type !== "finish") return undefined;
+
+      const spent = webTools?.usage();
+
+      return {
+        model,
+        web: Boolean(webTools),
+        searchProvider: provider?.name,
+        searchProviderId: provider?.id,
+        attempted: spent?.attempted ?? 0,
+        searches: spent?.searches ?? 0,
+        pagesRead: spent?.pagesRead ?? 0,
+        credits: spent?.credits ?? 0,
+        inputTokens: part.totalUsage?.inputTokens,
+        outputTokens: part.totalUsage?.outputTokens,
+        totalTokens: part.totalUsage?.totalTokens,
+      };
+    },
     onError: (error) =>
       error instanceof Error ? error.message : "The model request failed.",
   });

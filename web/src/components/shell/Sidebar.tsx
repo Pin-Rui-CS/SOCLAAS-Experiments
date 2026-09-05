@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { projects, type ProjectStatus } from "@/projects/registry";
@@ -164,6 +164,7 @@ type SearchUsage = {
  */
 const SEARCH_PROVIDER_STORAGE_KEY = "soclaas.chat.searchProvider";
 const SEARCH_PROVIDER_EVENT = "soclaas:search-provider";
+const USAGE_CHANGED_EVENT = "soclaas:usage-changed";
 
 function readSelectedProvider(): string | null {
   try {
@@ -201,37 +202,110 @@ function BudgetChip() {
   );
   const [gateway, setGateway] = useState<Gateway | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  /**
+   * Credits spent this session that the provider has not yet admitted to.
+   *
+   * Cleared per provider as soon as the server's own figure reaches or passes
+   * ours, so this never double-counts — it only ever fills the gap while the
+   * provider's reporting catches up.
+   */
+  const [pending, setPending] = useState<Record<string, number>>({});
+  /** Last figure each provider reported, to measure how much it has caught up. */
+  const lastReported = useRef<Record<string, number>>({});
+
+  const load = useCallback(async () => {
+    try {
+      const response = await fetch("/api/budget");
+      if (!response.ok) return;
+      const body = (await response.json()) as {
+        search: SearchUsage[];
+        providers: Array<{ id: string; name: string }>;
+        gateway: Gateway | null;
+      };
+      const fresh = body.search ?? [];
+
+      /*
+       * Draw down the local tally by however much the provider's own figure
+       * moved since we last looked.
+       *
+       * Without this the two would stack: we would add a credit locally, the
+       * provider would eventually add the same credit, and the chip would show
+       * two. Reconciling against the delta means each credit is counted by
+       * exactly one of the two sources at any moment.
+       */
+      const admitted: Record<string, number> = {};
+      for (const usage of fresh) {
+        const previous = lastReported.current[usage.providerId];
+        if (previous !== undefined && usage.used > previous) {
+          admitted[usage.providerId] = usage.used - previous;
+        }
+        lastReported.current[usage.providerId] = usage.used;
+      }
+
+      // Computed above rather than inside the updater: React may invoke an
+      // updater twice in development, and a ref write belongs nowhere near
+      // something that can run twice.
+      if (Object.keys(admitted).length > 0) {
+        setPending((current) => {
+          const next = { ...current };
+          for (const [id, count] of Object.entries(admitted)) {
+            next[id] = Math.max(0, (next[id] ?? 0) - count);
+          }
+          return next;
+        });
+      }
+
+      setUsages(fresh);
+      setProviders(body.providers ?? []);
+      setGateway(body.gateway);
+      // Read here rather than in an effect body: localStorage is unavailable
+      // during SSR, so it cannot seed useState without a hydration mismatch,
+      // and setting it synchronously in an effect is the cascading-render
+      // pattern React warns about. After an await it is neither.
+      setSelected(readSelectedProvider());
+    } catch {
+      /* leave the label as it was */
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const response = await fetch("/api/budget");
-        if (!response.ok) return;
-        const body = (await response.json()) as {
-          search: SearchUsage[];
-          providers: Array<{ id: string; name: string }>;
-          gateway: Gateway | null;
-        };
-        if (cancelled) return;
-        setUsages(body.search ?? []);
-        setProviders(body.providers ?? []);
-        setGateway(body.gateway);
-        // Read here rather than in an effect body: localStorage is unavailable
-        // during SSR, so it cannot seed useState without a hydration mismatch,
-        // and setting it synchronously in an effect is the cascading-render
-        // pattern React warns about. After an await it is neither.
-        setSelected(readSelectedProvider());
-      } catch {
-        /* leave the label as it was */
-      }
+    // Wrapped rather than called directly: `load` only sets state after an
+    // await, but the lint rule cannot see that through a direct call.
+    void (async () => {
+      await load();
     })();
+  }, [load]);
 
-    return () => {
-      cancelled = true;
+  /*
+   * Keep the balance current when a turn spends credits.
+   *
+   * Two mechanisms, because one is not enough. Refetching alone looks broken:
+   * Tavily's usage endpoint was measured still reporting a pre-search figure
+   * two minutes after the search, so the number would sit unchanged exactly
+   * when someone looks at it. So the spend is also added locally, straight
+   * away, and the server figure catches up behind it.
+   *
+   * `Math.max` is what makes the two safe together — the displayed total only
+   * ever rises, so a lagging server response cannot make it jump backwards.
+   */
+  useEffect(() => {
+    const onSpend = (event: Event) => {
+      const detail = (event as CustomEvent).detail as
+        | { providerId?: string; credits?: number }
+        | undefined;
+
+      const spent = detail?.credits ?? 0;
+      const id = detail?.providerId;
+      if (spent > 0 && id) {
+        setPending((current) => ({ ...current, [id]: (current[id] ?? 0) + spent }));
+      }
+
+      void load();
     };
-  }, []);
+
+    window.addEventListener(USAGE_CHANGED_EVENT, onSpend);
+    return () => window.removeEventListener(USAGE_CHANGED_EVENT, onSpend);
+  }, [load]);
 
   // Follow the chat's picker. The custom event covers this tab; `storage`
   // covers the same site open in another one.
@@ -254,7 +328,19 @@ function BudgetChip() {
    * because it reads as reassurance about the wrong account.
    */
   const activeId = selected ?? providers[0]?.id ?? null;
-  const search = usages.find((usage) => usage.providerId === activeId) ?? null;
+  const reported = usages.find((usage) => usage.providerId === activeId) ?? null;
+
+  /*
+   * The provider's figure plus whatever it has not yet counted.
+   *
+   * `pending` is drawn down in `load()` as the provider's own number rises, so
+   * a credit is never counted twice: it sits in `pending` only for the window
+   * between us spending it and the provider admitting to it.
+   */
+  const search =
+    reported && activeId
+      ? { ...reported, used: reported.used + (pending[activeId] ?? 0) }
+      : reported;
   const activeName =
     providers.find((provider) => provider.id === activeId)?.name ?? null;
 

@@ -10,7 +10,12 @@ import {
 } from "ai";
 import { Markdown } from "./components/Markdown";
 import { ReasoningPanel } from "./components/ReasoningPanel";
-import { SavedSources, ToolPanel } from "./components/ToolPanel";
+import {
+  SavedSources,
+  ToolPanel,
+  TurnCostLine,
+  type TurnCost,
+} from "./components/ToolPanel";
 import { Composer } from "./components/Composer";
 import { ModelPicker } from "./components/ModelPicker";
 import type { ModelInfo } from "./types";
@@ -38,6 +43,9 @@ const SEARCH_PROVIDER_STORAGE_KEY = "soclaas.chat.searchProvider";
  * localStorage keeps both in step without either knowing about the other.
  */
 export const SEARCH_PROVIDER_EVENT = "soclaas:search-provider";
+
+/** Fired when a turn spends search credits, so the sidebar balance refreshes. */
+export const USAGE_CHANGED_EVENT = "soclaas:usage-changed";
 
 export default function ChatView() {
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -76,7 +84,32 @@ export default function ChatView() {
   );
 
   const { messages, setMessages, sendMessage, stop, status, error, regenerate } =
-    useChat({ transport });
+    useChat({
+      transport,
+      /*
+       * Tell the sidebar to re-read the balance, but only when the turn
+       * actually spent something.
+       *
+       * Firing on every message would put a needless request behind each
+       * ordinary reply; firing on none would leave the one number that is
+       * supposed to be running out as stale as the last page load.
+       */
+      onFinish: ({ message }) => {
+        const meta = message.metadata as TurnCost | undefined;
+        const spent = meta?.credits ?? 0;
+        if (spent === 0) return;
+
+        // The count travels with the event because the provider's own usage
+        // endpoint lags — Tavily was still reporting a pre-search figure two
+        // minutes later. The sidebar adds this immediately and lets the server
+        // figure catch up behind it.
+        window.dispatchEvent(
+          new CustomEvent(USAGE_CHANGED_EVENT, {
+            detail: { providerId: meta?.searchProviderId, credits: spent },
+          }),
+        );
+      },
+    });
 
   const busy = status === "submitted" || status === "streaming";
 
@@ -610,6 +643,12 @@ function MessageList({ messages, busy }: { messages: UIMessage[]; busy: boolean 
                     : [],
                 )}
               />
+
+              {/* Only present once the turn has finished, so it never flickers
+                * in mid-stream with a partial count. */}
+              {!streaming && (
+                <TurnCostLine cost={message.metadata as TurnCost | undefined} />
+              )}
 
               {renderable.length === 0 && streaming && <Waiting />}
             </div>
