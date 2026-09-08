@@ -1,4 +1,5 @@
 import type { ProjectManifest } from "./types";
+import { apiAgentManifest } from "./apiagent/manifest";
 import { chatManifest } from "./chat/manifest";
 import { forecasterManifest } from "./forecaster/manifest";
 
@@ -13,7 +14,11 @@ import { forecasterManifest } from "./forecaster/manifest";
  * would trade a remembered line for build magic, which is a bad trade at this
  * size. Worth revisiting at three or four projects.
  */
-export const projects: ProjectManifest[] = [chatManifest, forecasterManifest];
+export const projects: ProjectManifest[] = [
+  chatManifest,
+  apiAgentManifest,
+  forecasterManifest,
+];
 
 export function getProject(slug: string): ProjectManifest | undefined {
   return projects.find((project) => project.slug === slug);
