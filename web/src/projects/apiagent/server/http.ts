@@ -23,8 +23,19 @@
  * Per-request ceiling. The gateway allows 300s for the WHOLE turn, and a turn
  * can hold six steps with several parallel calls in each, so no single API is
  * allowed to eat a meaningful share of it.
+ *
+ * Raised from 10s after a measured failure. Asked for US CPI, the agent called
+ * FRED four times and every one timed out, so it reported that it could not
+ * answer — while curl fetched the same URL in 0.67s. Timing the endpoint from
+ * Node with identical headers gave 1.4s, 2.0s, 5.1s, 11.1s, 12.9s and 13.1s on
+ * consecutive attempts: not a cold start, not a header problem, just wide
+ * variance through Akamai. A 10s ceiling sat in the middle of that spread, so
+ * FRED failed perhaps half the time, at random.
+ *
+ * 15s covers the bulk of that distribution while still bounding a dead host.
+ * Adapters measured to need more say so themselves via `timeoutMs`.
  */
-export const REQUEST_TIMEOUT_MS = 10_000;
+export const REQUEST_TIMEOUT_MS = 15_000;
 
 /**
  * Chars of any one adapter result the model is allowed to see. The same number

@@ -58,11 +58,10 @@ to the internet.
 
 ## Projects
 
-| Project | Status | |
-| --- | --- | --- |
-| [Chat](web/src/projects/chat) | Live on the site | Streaming chat across the SoCLaaS model catalogue |
-| [API Agent](web/src/projects/apiagent) | Live on the site | Research agent over 24 public data APIs, with tiered provenance |
-| [Forecaster](projects/forecaster) | CLI only | Multi-model binary forecasting with a hardened JSON layer |
+| Project                           | Status           |                                                           |
+| --------------------------------- | ---------------- | --------------------------------------------------------- |
+| [Chat](web/src/projects/chat)     | Live on the site | Streaming chat across the SoCLaaS model catalogue         |
+| [Forecaster](projects/forecaster) | CLI only         | Multi-model binary forecasting with a hardened JSON layer |
 
 ### Adding a project
 
@@ -72,13 +71,6 @@ to the internet.
 3. Add one line to `web/src/projects/registry.ts`.
 
 Nothing else needs to change, and no project imports another.
-
-**Keep each experiment self-contained.** Everything specific to it — adapters,
-prompts, request handler, UI, storage — lives in its own folder, so exporting or
-deleting it is one directory plus one registry line. `web/src/lib/` is for the
-platform only: the gateway client, environment access, the auth gate. `apiagent`
-is the worked example; `chat` predates the rule and still keeps two of its own
-modules in `lib/`.
 
 ## Notes on the gateway
 

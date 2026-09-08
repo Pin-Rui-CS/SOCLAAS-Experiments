@@ -30,10 +30,9 @@ import { capRows, getJson, isObject, now, truncate } from "../http.ts";
  * agency's own release, FRED is a mirror and the agency is the resolution
  * source. Every result says so.
  *
- * NOT VERIFIED LIVE. `FRED_API_KEY` was not set when this was written, so only
- * the unauthenticated error path was exercised (the host answers a keyless
- * request with a 400 naming `api_key`). Run `npm run test:apiagent` once a key
- * is in place — the smoke case is already there and will stop skipping.
+ * VERIFIED LIVE 2026-09-08, all three modes. `info` on CPIAUCSL correctly
+ * reported July as the newest published month with the next release due on
+ * 11 September — the temporal-feasibility gate working end to end.
  */
 
 const params = z.object({
@@ -95,6 +94,21 @@ type ReleaseDatesResponse = {
 
 const BASE = "https://api.stlouisfed.org/fred";
 
+/**
+ * FRED gets its own, longer ceiling.
+ *
+ * MEASURED 2026-09-08 from this network: identical requests to
+ * `api.stlouisfed.org` returned in 1.4s, 2.0s, 5.1s, 11.1s, 12.9s and 13.1s on
+ * consecutive attempts, while curl fetched the same URL in 0.67s. Not a cold
+ * start (it recurs warm), not a User-Agent problem (it recurs across four
+ * different ones) — the host is simply erratic through its CDN.
+ *
+ * Under the old 10s default this made FRED fail intermittently and invisibly:
+ * the agent reported "that API did not respond in time" and gave up on a
+ * question it could have answered.
+ */
+const TIMEOUT_MS = 30_000;
+
 function apiKey(): string {
   const key = process.env.FRED_API_KEY?.trim();
   if (!key) throw new Error("FRED_API_KEY is not configured.");
@@ -137,6 +151,7 @@ async function runSearch(input: Params, signal: AbortSignal) {
 
   const body = await getJson<SeriesResponse>(url.toString(), {
     signal,
+    timeoutMs: TIMEOUT_MS,
     context: "FRED search",
     expect: (value) => isObject(value) && Array.isArray(value.seriess),
     expected: "an object with a seriess array",
@@ -176,6 +191,7 @@ async function runInfo(input: Params, signal: AbortSignal) {
   const seriesUrl = endpoint("series", { series_id: input.seriesId });
   const seriesBody = await getJson<SeriesResponse>(seriesUrl.toString(), {
     signal,
+    timeoutMs: TIMEOUT_MS,
     context: "FRED series",
     expect: (value) => isObject(value) && Array.isArray(value.seriess),
     expected: "an object with a seriess array",
@@ -207,6 +223,7 @@ async function runInfo(input: Params, signal: AbortSignal) {
     const releaseUrl = endpoint("series/release", { series_id: input.seriesId });
     const releaseBody = await getJson<ReleaseResponse>(releaseUrl.toString(), {
       signal,
+      timeoutMs: TIMEOUT_MS,
       context: "FRED release",
       expect: (value) => isObject(value) && Array.isArray(value.releases),
       expected: "an object with a releases array",
@@ -224,28 +241,42 @@ async function runInfo(input: Params, signal: AbortSignal) {
         realtime_start: today,
         limit: "5",
       });
-      const datesBody = await getJson<ReleaseDatesResponse>(datesUrl.toString(), {
-        signal,
-        context: "FRED release dates",
-        expect: (value) => isObject(value) && Array.isArray(value.release_dates),
-        expected: "an object with a release_dates array",
-      });
-      upcoming = (datesBody.release_dates ?? [])
-        .map((entry) => entry.date)
-        .filter((date): date is string => Boolean(date) && date! >= today)
-        .slice(0, 3);
-
       const pastUrl = endpoint("release/dates", {
         release_id: String(release.id),
         sort_order: "desc",
         limit: "3",
       });
-      const pastBody = await getJson<ReleaseDatesResponse>(pastUrl.toString(), {
-        signal,
-        context: "FRED release dates",
-        expect: (value) => isObject(value) && Array.isArray(value.release_dates),
-        expected: "an object with a release_dates array",
-      });
+
+      /*
+       * The two calendar lookups are independent, so they go together.
+       *
+       * This matters more here than the code suggests. `info` was four
+       * SEQUENTIAL requests to a host measured at up to 13s each, which is how
+       * a mode that answers in under two seconds on a good day could take the
+       * better part of a minute on a bad one. Running these two concurrently
+       * makes it three round trips instead of four.
+       */
+      const [datesBody, pastBody] = await Promise.all([
+        getJson<ReleaseDatesResponse>(datesUrl.toString(), {
+          signal,
+          timeoutMs: TIMEOUT_MS,
+          context: "FRED release dates",
+          expect: (value) => isObject(value) && Array.isArray(value.release_dates),
+          expected: "an object with a release_dates array",
+        }),
+        getJson<ReleaseDatesResponse>(pastUrl.toString(), {
+          signal,
+          timeoutMs: TIMEOUT_MS,
+          context: "FRED release dates",
+          expect: (value) => isObject(value) && Array.isArray(value.release_dates),
+          expected: "an object with a release_dates array",
+        }),
+      ]);
+
+      upcoming = (datesBody.release_dates ?? [])
+        .map((entry) => entry.date)
+        .filter((date): date is string => Boolean(date) && date! >= today)
+        .slice(0, 3);
       recent = (pastBody.release_dates ?? [])
         .map((entry) => entry.date)
         .filter((date): date is string => Boolean(date));
@@ -302,6 +333,7 @@ async function runObservations(input: Params, signal: AbortSignal) {
   const url = endpoint("series/observations", query);
   const body = await getJson<ObservationsResponse>(url.toString(), {
     signal,
+    timeoutMs: TIMEOUT_MS,
     context: "FRED observations",
     expect: (value) => isObject(value) && Array.isArray(value.observations),
     expected: "an object with an observations array",

@@ -255,6 +255,39 @@ function sample(rows: unknown[]): string {
   return text.length > 220 ? `${text.slice(0, 220)}…` : text;
 }
 
+/**
+ * How many live calls to have in flight at once.
+ *
+ * Was `Promise.all` over every case, which opened twenty-five sockets at once
+ * and made the suite itself flaky: one run failed on a timeout that a rerun did
+ * not reproduce. That is the same cries-wolf failure the GDELT `flaky` flag
+ * exists to prevent — a check nobody trusts is a check nobody reads.
+ *
+ * Six also mirrors reality. The agent fans out at most a handful of `call_api`
+ * invocations per step, so testing under two dozen concurrent requests was
+ * measuring a load the product never generates.
+ */
+const CONCURRENCY = 6;
+
+/** Map with a concurrency cap, preserving input order in the results. */
+async function inBatches<T, R>(
+  items: T[],
+  limit: number,
+  run: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (let i = next++; i < items.length; i = next++) {
+      results[i] = await run(items[i]);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+}
+
 type Outcome = "pass" | "fail" | "skip" | "flaky";
 
 async function runCase(testCase: Case): Promise<Outcome> {
@@ -394,8 +427,12 @@ async function main(): Promise<void> {
   console.log(`\n${DIM}Matcher regressions — must NOT match${RESET}\n`);
   const antiOk = runAntiRouting();
 
-  console.log(`\n${DIM}Adapters — ${CASES.length} live requests, in parallel${RESET}\n`);
-  const results = await Promise.all(CASES.map(runCase));
+  console.log(
+    `
+${DIM}Adapters — ${CASES.length} live requests, ${CONCURRENCY} at a time${RESET}
+`,
+  );
+  const results = await inBatches(CASES, CONCURRENCY, runCase);
   const passed = results.filter((outcome) => outcome === "pass").length;
   const skipped = results.filter((outcome) => outcome === "skip").length;
   const failed = results.filter((outcome) => outcome === "fail").length;
