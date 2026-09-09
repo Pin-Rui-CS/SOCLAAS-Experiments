@@ -110,8 +110,27 @@ export function createApiTools() {
         api: z
           .string()
           .describe('The id field from a find_apis candidate, e.g. "fdic_failures".'),
+        /*
+         * `z.looseObject({})`, not `z.record(z.string(), z.unknown())`.
+         *
+         * Both describe "an object with arbitrary keys", but zod compiles the
+         * record form to `propertyNames: {type: "string"}`, and the gateway's
+         * constrained decoder does not implement that key. It rejects the whole
+         * request before generation starts:
+         *
+         *   Grammar error: Unimplemented keys: ["propertyNames"]
+         *
+         * MEASURED 2026-09-09 against the live gateway: qwen3.6:35b failed every
+         * turn this way with zero tool calls, while gemma4:26b and qwen3.8:27b
+         * were unaffected — the grammar is only enforced for some backends, which
+         * is why this passed the 2026-09-06 check in models.ts and broke later
+         * without the schema changing.
+         *
+         * looseObject emits `{type: "object", properties: {}, additionalProperties: {}}`,
+         * which every backend accepts and which permits exactly the same values.
+         */
         params: z
-          .record(z.string(), z.unknown())
+          .looseObject({})
           .describe("Parameters for that API, as described in its paramsHelp."),
       }),
       async execute({ api, params }, { abortSignal }) {
