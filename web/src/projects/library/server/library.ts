@@ -8,23 +8,31 @@
  * - `discrete` is a fourth question type, shaped like numeric.
  * - `extra.ensemble` is parallel to `run_values` only after removing entries
  *   marked `dropped`.
- * - For numeric/discrete, `final_forecast` is the submitted 201-point CDF, not
- *   a run_value; `question_details.scaling.continuous_range` holds its x-values.
+ * - For numeric/discrete, `final_forecast` is the submitted CDF, not a
+ *   run_value; `question_details.scaling.continuous_range` holds its x-values.
+ *   201 points for numeric, `outcome_count + 1` for discrete.
+ * - Per-run CDFs are not stored, but each run's `spec` is exactly what the bot
+ *   rendered, so `distributions.ts` reproduces them (checked against the bot's
+ *   `spec_to_cdf`: max difference 5e-8).
  * - Metaculus refuses unauthenticated reads, and with the bot's token the
  *   community aggregate comes back null — so "live" means status and counts,
  *   plus the community forecast only when Metaculus actually sends one.
  */
 
 import { Supabase, gunzip } from "./supabase.ts";
+import { specCdf } from "./distributions.ts";
+import { summarizeCdf } from "../cdf.ts";
 import type {
+  Competition,
   CostLine,
-  Distribution,
+  Curves,
   FileKey,
   ForecastDetail,
   ForecastValue,
   LibraryItem,
   LiveQuestion,
   RunEntry,
+  Spread,
 } from "../types.ts";
 
 type Row = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -45,39 +53,7 @@ export function validKey(runId: string | null, questionId: string | null): boole
 
 // --- Distributions ------------------------------------------------------------
 
-const QUANTILES = [0.1, 0.25, 0.5, 0.75, 0.9];
-
-/**
- * Read quantiles off a Metaculus CDF. `cdf[i]` is P(X ≤ range[i]); the mass
- * below `cdf[0]` and above `cdf[last]` sits outside the question's bounds.
- * Linear interpolation between grid points, which on a 201-point grid is well
- * inside the precision anyone reads a forecast at.
- */
-export function summarizeCdf(cdf: number[], range: number[] | null): Distribution | null {
-  if (!Array.isArray(cdf) || cdf.length < 2) return null;
-  const xs = range && range.length === cdf.length
-    ? range
-    : cdf.map((_, i) => i / (cdf.length - 1)); // unscaled fallback
-
-  const at = (q: number): number | null => {
-    if (q < cdf[0] || q > cdf[cdf.length - 1]) return null; // out of bounds
-    for (let i = 1; i < cdf.length; i++) {
-      if (cdf[i] >= q) {
-        const span = cdf[i] - cdf[i - 1];
-        const t = span > 0 ? (q - cdf[i - 1]) / span : 0;
-        return xs[i - 1] + t * (xs[i] - xs[i - 1]);
-      }
-    }
-    return xs[xs.length - 1];
-  };
-
-  return {
-    quantiles: QUANTILES.map((q) => ({ q, value: at(q) })),
-    belowRange: cdf[0],
-    aboveRange: 1 - cdf[cdf.length - 1],
-    scaled: xs === range,
-  };
-}
+export { summarizeCdf };
 
 function finalValue(type: string, final: unknown, range: number[] | null): ForecastValue | null {
   if (final == null) return null;
@@ -112,6 +88,24 @@ function runValue(type: string, value: unknown): ForecastValue | null {
 
 // --- Queries --------------------------------------------------------------------
 
+/**
+ * What the row itself says about its competition. `raw.tournaments` is the
+ * post's own list (bot, 2026-09-27 on). Older rows may only carry the slugs the
+ * run was launched with, which have no display name. Neither → `null`, and the
+ * client asks Metaculus via `getTournaments`.
+ */
+function competitionsOf(row: Row | undefined): Competition[] | null {
+  if (Array.isArray(row?.tournaments)) {
+    return row.tournaments
+      .filter((t: Row) => t && (t.slug || t.name))
+      .map((t: Row) => ({ slug: String(t.slug ?? t.name), name: t.name ?? null }));
+  }
+  if (Array.isArray(row?.cli_tournaments) && row.cli_tournaments.length) {
+    return row.cli_tournaments.map((slug: unknown) => ({ slug: String(slug), name: null }));
+  }
+  return null;
+}
+
 export async function listLibrary(db: Supabase): Promise<LibraryItem[]> {
   const [library, finals] = await Promise.all([
     db.select<Row>("forecast_library", {
@@ -125,7 +119,8 @@ export async function listLibrary(db: Supabase): Promise<LibraryItem[]> {
     db.select<Row>("forecasts", {
       select:
         "run_id,question_id,final:raw->final_forecast," +
-        "range:raw->question_details->scaling->continuous_range,unit:raw->question_details->unit",
+        "range:raw->question_details->scaling->continuous_range,unit:raw->question_details->unit," +
+        "tournaments:raw->tournaments,cli_tournaments:raw->provenance->cli->tournaments",
       limit: "500",
     }),
   ]);
@@ -139,6 +134,7 @@ export async function listLibrary(db: Supabase): Promise<LibraryItem[]> {
       postId: r.post_id,
       title: r.title ?? `Question ${r.question_id}`,
       type: r.question_type,
+      competitions: competitionsOf(extra),
       runAt: r.run_at,
       workflow: r.workflow,
       submitted: !!r.submitted,
@@ -182,10 +178,12 @@ export async function getForecast(
 
   // Zip the non-dropped ensemble entries with run_values; dropped ones get no value.
   const values: unknown[] = raw.run_values ?? [];
+  const used: { index: number; model: string; value: Row }[] = [];
   let next = 0;
   const runs: RunEntry[] = (raw.extra?.ensemble ?? []).map((e: Row, i: number) => {
     const dropped = !!e.dropped;
     const value = dropped ? null : values[next++];
+    if (!dropped && value) used.push({ index: i + 1, model: e.model ?? "unknown", value: value as Row });
     return {
       index: i + 1,
       model: e.model ?? "unknown",
@@ -225,6 +223,7 @@ export async function getForecast(
     cost.set(k, line);
   }
 
+  const curves = buildCurves(type, raw, range, used);
   const o = outcome.rows[0] ?? {};
   return {
     runId: row.run_id,
@@ -250,6 +249,8 @@ export async function getForecast(
       resolveTime: qd.scheduled_resolve_time ?? null,
     },
     final: finalValue(type, raw.final_forecast, range),
+    curves,
+    spread: buildSpread(type, used, curves),
     runs,
     artifactCheck: raw.artifact_check ?? null,
     degradedProviders: raw.degraded_search_providers ?? [],
@@ -263,6 +264,84 @@ export async function getForecast(
       score: o.score ?? null,
     },
   };
+}
+
+/**
+ * The chart data for a numeric/discrete forecast: the submitted CDF exactly as
+ * stored, plus each used run's spec re-rendered on the same grid. A run whose
+ * spec will not render is left out with a note — never a failed page.
+ */
+function buildCurves(
+  type: string,
+  raw: Row,
+  range: number[] | null,
+  used: { index: number; model: string; value: Row }[],
+): Curves | null {
+  if (type !== "numeric" && type !== "discrete") return null;
+  const final = raw.final_forecast;
+  if (!Array.isArray(range) || !Array.isArray(final) || final.length !== range.length) return null;
+
+  const qd: Row = raw.question_details ?? {};
+  const notes: string[] = [];
+  const series: Curves["series"] = [
+    { id: "submitted", label: "Submitted", kind: "submitted", cdf: final.map(Number) },
+  ];
+  for (const run of used) {
+    try {
+      series.push({
+        id: `run-${run.index}`,
+        label: run.model,
+        kind: "run",
+        runIndex: run.index,
+        cdf: specCdf(run.value.spec, range),
+      });
+    } catch (error) {
+      notes.push(`Run ${run.index} (${run.model}) not drawn: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+
+  return {
+    x: range,
+    discrete: type === "discrete",
+    lowerOpen: !!(qd.open_lower_bound ?? qd.scaling?.open_lower_bound),
+    upperOpen: !!(qd.open_upper_bound ?? qd.scaling?.open_upper_bound),
+    series,
+    notes,
+  };
+}
+
+/** Where each used run landed, for the at-a-glance model spread. */
+function buildSpread(
+  type: string,
+  used: { index: number; value: Row }[],
+  curves: Curves | null,
+): Spread | null {
+  if (!used.length) return null;
+  if (type === "binary") {
+    const points = used
+      .filter((r) => typeof r.value === "number")
+      .map((r) => ({ runIndex: r.index, p: r.value as unknown as number }));
+    return points.length ? { kind: "binary", points } : null;
+  }
+  if (type === "multiple_choice") {
+    const options: Record<string, { runIndex: number; p: number }[]> = {};
+    for (const r of used) {
+      for (const [option, p] of Object.entries(r.value)) {
+        if (typeof p === "number") (options[option] ??= []).push({ runIndex: r.index, p });
+      }
+    }
+    return Object.keys(options).length ? { kind: "mc", options } : null;
+  }
+  if (curves) {
+    const medians = curves.series
+      .filter((s) => s.kind === "run")
+      .map((s) => {
+        const median = summarizeCdf(s.cdf, curves.x, [0.5])?.quantiles[0];
+        return { runIndex: s.runIndex!, value: median?.value ?? null, side: median?.side };
+      });
+    return medians.length ? { kind: "distribution", medians } : null;
+  }
+  return null;
 }
 
 /** §4: a missing file means "not produced", so this returns null rather than throwing. */
@@ -341,5 +420,41 @@ export async function getLive(token: string, postId: number): Promise<LiveQuesti
     cached: false,
   };
   liveCache.set(postId, { at: Date.now(), value });
+  return value;
+}
+
+const TOURNAMENT_TTL_MS = 24 * 60 * 60_000; // membership does not change
+const tournamentCache = new Map<number, { at: number; value: Competition[] }>();
+
+/**
+ * A post's tournaments, for rows published before the bot recorded them.
+ * Shares `getLive`'s per-instance 3s spacing; the client calls this one post
+ * at a time and keeps the answer in localStorage, so each question is asked
+ * about once per browser.
+ */
+export async function getTournaments(token: string, postId: number): Promise<Competition[]> {
+  const cached = tournamentCache.get(postId);
+  if (cached && Date.now() - cached.at < TOURNAMENT_TTL_MS) return cached.value;
+
+  const wait = lastCall + 3000 - Date.now();
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  lastCall = Date.now();
+
+  const response = await fetch(`${METACULUS}/posts/${postId}/`, {
+    headers: { Authorization: `Token ${token}` },
+    cache: "no-store",
+  });
+  if (response.status === 429) {
+    const retry = response.headers.get("retry-after");
+    throw new Error(`Metaculus rate limit; retry after ${retry ?? "a while"}s`);
+  }
+  if (!response.ok) throw new Error(`Metaculus ${response.status}`);
+
+  const post: Row = await response.json();
+  const entries: Row[] = Array.isArray(post.projects?.tournament) ? post.projects.tournament : [];
+  const value = entries
+    .filter((t) => t && (t.slug || t.name))
+    .map((t) => ({ slug: String(t.slug ?? t.name), name: t.name ?? null }));
+  tournamentCache.set(postId, { at: Date.now(), value });
   return value;
 }

@@ -1,6 +1,6 @@
 import "server-only";
 import { Supabase, SupabaseError } from "./supabase.ts";
-import { getFile, getForecast, getLive, listLibrary, validKey } from "./library.ts";
+import { getFile, getForecast, getLive, getTournaments, listLibrary, validKey } from "./library.ts";
 import type { FileKey } from "../types.ts";
 
 /**
@@ -11,6 +11,7 @@ import type { FileKey } from "../types.ts";
  *   ?view=forecast&run=<run_id>&q=<question_id>
  *   ?view=file&run=…&q=…&file=research|runs|audit|evolution
  *   ?view=live&post=<post_id>
+ *   ?view=tournaments&post=<post_id>   (rows that predate raw.tournaments)
  *
  * Credentials are this project's own and server-side only. The site signs in
  * to Supabase as the library's owner — FORECAST-LIBRARY-HANDOFF.md §1's
@@ -71,14 +72,16 @@ export async function GET(request: Request) {
       return json({ text: await getFile(db(), run!, q!, file) });
     }
 
-    if (view === "live") {
+    if (view === "live" || view === "tournaments") {
       const post = Number(params.get("post"));
       if (!Number.isInteger(post) || post <= 0) return json({ error: "bad post id" }, 400);
       const token = env("METACULUS_TOKEN");
       if (!token) {
         return json({ error: "Set METACULUS_TOKEN to fetch live data — Metaculus refuses anonymous reads." }, 503);
       }
-      return json(await getLive(token, post));
+      return view === "live"
+        ? json(await getLive(token, post))
+        : json({ competitions: await getTournaments(token, post) });
     }
 
     return json({ error: "unknown view" }, 400);

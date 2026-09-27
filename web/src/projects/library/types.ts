@@ -3,8 +3,8 @@
 export type FileKey = "research" | "runs" | "audit" | "evolution";
 
 export type Distribution = {
-  /** `value` is null when the quantile falls outside the question's bounds. */
-  quantiles: { q: number; value: number | null }[];
+  /** `value` is null when the quantile falls outside the question's bounds; `side` says which. */
+  quantiles: { q: number; value: number | null; side?: "below" | "above" }[];
   belowRange: number;
   aboveRange: number;
   /** False when no x-axis was available and values are on the unit interval. */
@@ -20,12 +20,20 @@ export type ForecastValue =
       components: { name: string; family: string; weight: number | null; p50: number | null }[];
     };
 
+/** A Metaculus tournament. `name` may be missing when only the slug is known. */
+export type Competition = { slug: string; name: string | null };
+
 export type LibraryItem = {
   runId: string;
   questionId: number;
   postId: number | null;
   title: string;
   type: string;
+  /**
+   * From `raw.tournaments` (bot, 2026-09-27 on) or the run's CLI tournaments.
+   * `null` means not recorded — the client looks it up from Metaculus.
+   */
+  competitions: Competition[] | null;
   runAt: string | null;
   workflow: string | null;
   submitted: boolean;
@@ -71,6 +79,38 @@ export type ArtifactCheck = {
   retry_queries?: string[];
 };
 
+/** One CDF on the question's grid, for the charts. */
+export type CurveSeries = {
+  id: string;
+  label: string;
+  kind: "submitted" | "run";
+  /** 1-based ensemble position, which fixes the run's colour. */
+  runIndex?: number;
+  cdf: number[];
+};
+
+/** Numeric/discrete only: the submitted CDF plus each used run, all on `x`. */
+export type Curves = {
+  /** Nominal x-value of each grid point — `question_details.scaling.continuous_range`. */
+  x: number[];
+  discrete: boolean;
+  lowerOpen: boolean;
+  upperOpen: boolean;
+  series: CurveSeries[];
+  /** Runs that could not be drawn, and why. */
+  notes: string[];
+};
+
+/** How far the used runs disagreed, per run so the UI can place each one. */
+export type Spread =
+  | { kind: "binary"; points: { runIndex: number; p: number }[] }
+  | { kind: "mc"; options: Record<string, { runIndex: number; p: number }[]> }
+  | {
+      kind: "distribution";
+      /** Each run's median; null when it lies outside the question's range. */
+      medians: { runIndex: number; value: number | null; side?: "below" | "above" }[];
+    };
+
 export type ForecastDetail = {
   runId: string;
   questionId: number;
@@ -95,6 +135,8 @@ export type ForecastDetail = {
     resolveTime: string | null;
   };
   final: ForecastValue | null;
+  curves: Curves | null;
+  spread: Spread | null;
   runs: RunEntry[];
   artifactCheck: ArtifactCheck | null;
   degradedProviders: string[];

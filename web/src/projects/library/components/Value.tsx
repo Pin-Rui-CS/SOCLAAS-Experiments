@@ -33,11 +33,13 @@ export function valueSummary(value: ForecastValue | null, unit = ""): string {
       return pct(value.p);
     case "mc": {
       const [top, p] = Object.entries(value.options).sort((a, b) => b[1] - a[1])[0] ?? [];
-      return top ? `${top} ${pct(p)}` : "—";
+      // A colon, so an option named "0" does not read as part of the number.
+      return top ? `${top}: ${pct(p)}` : "—";
     }
     case "distribution": {
-      const median = value.distribution.quantiles.find((q) => q.q === 0.5)?.value ?? null;
-      return `median ${formatNumber(median, unit)}`;
+      const median = value.distribution.quantiles.find((q) => q.q === 0.5);
+      if (median && median.value == null && median.side) return `median ${median.side} range`;
+      return `median ${formatNumber(median?.value ?? null, unit)}`;
     }
     case "mixture":
       return `${value.components.length}-component mixture`;
@@ -66,11 +68,11 @@ export function ValueView({ value, unit = "" }: { value: ForecastValue | null; u
       return (
         <div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 18px" }}>
-            {d.quantiles.map(({ q, value: x }) => (
+            {d.quantiles.map(({ q, value: x, side }) => (
               <span key={q} style={{ whiteSpace: "nowrap" }}>
                 <span style={{ color: "var(--text-muted)" }}>p{Math.round(q * 100)} </span>
                 <strong style={{ fontVariantNumeric: "tabular-nums" }}>
-                  {x == null ? "out of range" : formatNumber(x, unit)}
+                  {x == null ? `${side ?? "out of"} range` : formatNumber(x, unit)}
                 </strong>
               </span>
             ))}

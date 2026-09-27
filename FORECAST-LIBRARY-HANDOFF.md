@@ -124,6 +124,11 @@ question_details      the Metaculus question as fetched at run time:
   scheduled_close_time, scheduled_resolve_time
   <- a SNAPSHOT. For current status / community prediction, call the API (§6).
 
+tournaments[]         [{ id, slug, name }] from the post's projects.tournament,
+                      e.g. metaculus-cup-fall-2026. Added 2026-09-27; ADDITIVE,
+                      no schema_version bump -- absent on older rows, so treat
+                      a missing key as "unknown", not "none".
+
 artifact_check        { status: complete|partial|missing, what_was_found,
                         what_is_missing, closest_available, forecast_swing,
                         retry_queries[] }

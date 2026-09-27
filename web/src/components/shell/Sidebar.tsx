@@ -17,7 +17,14 @@ const STATUS_HINT: Record<ProjectStatus, string | null> = {
   planned: "Soon",
 };
 
-export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+export function SidebarContent({
+  onNavigate,
+  onCollapse,
+}: {
+  onNavigate?: () => void;
+  /** Desktop only: shrink the sidebar to a rail. Omitted in the phone drawer. */
+  onCollapse?: () => void;
+}) {
   const pathname = usePathname();
 
   return (
@@ -27,20 +34,51 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     >
       <div
         style={{
-          padding: "18px 18px 14px",
+          padding: "18px 14px 14px 18px",
           borderBottom: "1px solid var(--border)",
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 8,
         }}
       >
-        <Link
-          href="/"
-          onClick={onNavigate}
-          style={{ display: "block", fontWeight: 600, letterSpacing: "-0.01em" }}
-        >
-          SoCLaaS
-        </Link>
-        <div style={{ color: "var(--text-faint)", fontSize: 12, marginTop: 2 }}>
-          Experiments
+        <div>
+          <Link
+            href="/"
+            onClick={onNavigate}
+            style={{ display: "block", fontWeight: 600, letterSpacing: "-0.01em" }}
+          >
+            SoCLaaS
+          </Link>
+          <div style={{ color: "var(--text-faint)", fontSize: 12, marginTop: 2 }}>
+            Experiments
+          </div>
         </div>
+        {onCollapse && (
+          <button
+            type="button"
+            id="sidebar-collapse"
+            onClick={onCollapse}
+            aria-label="Collapse sidebar"
+            aria-expanded={true}
+            title="Collapse sidebar"
+            style={{
+              width: 28,
+              height: 28,
+              display: "grid",
+              placeItems: "center",
+              border: "1px solid transparent",
+              borderRadius: "var(--radius)",
+              background: "transparent",
+              color: "var(--text-faint)",
+              cursor: "pointer",
+              fontSize: 15,
+              lineHeight: 1,
+            }}
+          >
+            «
+          </button>
+        )}
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "12px 10px" }}>

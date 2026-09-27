@@ -25,6 +25,7 @@
  */
 
 import { BUCKET, Supabase, SupabaseError, gunzip } from "./supabase.ts";
+import { specCdf } from "./distributions.ts";
 
 type Status = "PASS" | "FAIL" | "WARN" | "SKIP" | "INFO";
 type Row = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -378,6 +379,83 @@ await check("§3", "worked example — question 45859 on 2026-09-24", async () =
   ];
 });
 
+// Not a handoff claim — a guard for the reader's charts, which re-render each
+// run's spec with distributions.ts. Fails when the bot starts emitting a family
+// that file does not know, before the page quietly drops those curves.
+const continuousRows = live.filter(
+  (f) => (f.question_type === "numeric" || f.question_type === "discrete") && f.raw.run_values?.length,
+);
+
+await check("§3", "every numeric/discrete run spec renders for the charts", async () => {
+  if (!continuousRows.length) return ["SKIP", "no numeric/discrete rows"];
+  const bad: string[] = [];
+  let rendered = 0;
+  for (const f of continuousRows) {
+    const xs: number[] = f.raw.question_details?.scaling?.continuous_range ?? [];
+    f.raw.run_values.forEach((v: Row, i: number) => {
+      try {
+        const cdf = specCdf(v.spec, xs);
+        const ok = cdf.length === xs.length && cdf.every((p, k) => p >= 0 && p <= 1 && (k === 0 || p >= cdf[k - 1]));
+        if (ok) rendered++;
+        else bad.push(`${f.question_id} run value ${i}: not a valid CDF`);
+      } catch (error) {
+        bad.push(`${f.question_id} run value ${i} (${v.spec?.type}): ${error instanceof Error ? error.message : error}`);
+      }
+    });
+  }
+  return bad.length ? ["FAIL", bad.slice(0, 5).join("\n")] : ["PASS", `${rendered} run curves`];
+});
+
+/**
+ * The bot's `quantile_average_cdfs`, condensed: average the in-grid shape in
+ * index space, the off-grid masses separately. Only used to report how close
+ * the reconstructed runs come to the submitted CDF — the gap left is the bot's
+ * final smoothing (`_standardize_cdf`).
+ */
+function quantileAverage(cdfs: number[][]): number[] {
+  if (cdfs.length === 1) return cdfs[0];
+  const size = cdfs[0].length;
+  const levels = Array.from({ length: 4 * size - 1 }, (_, i) => (i + 1) / (4 * size));
+  const interp = (x: number, xp: number[], fp: number[]) => {
+    if (x <= xp[0]) return fp[0];
+    if (x >= xp[xp.length - 1]) return fp[fp.length - 1];
+    let i = 1;
+    while (xp[i] < x) i++;
+    return fp[i - 1] + ((x - xp[i - 1]) / (xp[i] - xp[i - 1])) * (fp[i] - fp[i - 1]);
+  };
+  const strictly = (a: number[]) => a.map((v, i) => v + i * 1e-12);
+  const lower = cdfs.reduce((s, c) => s + c[0], 0) / cdfs.length;
+  const upper = cdfs.reduce((s, c) => s + 1 - c[size - 1], 0) / cdfs.length;
+  const shapes = cdfs
+    .filter((c) => c[size - 1] - c[0] > 1e-9)
+    .map((c) => c.map((p) => (p - c[0]) / (c[size - 1] - c[0])));
+  const idx = Array.from({ length: size }, (_, i) => i);
+  const positions = levels.map((q) => shapes.reduce((s, c) => s + interp(q, strictly(c), idx), 0) / shapes.length);
+  const conditional = idx.map((x) => interp(x, strictly(positions), levels));
+  conditional[0] = 0;
+  conditional[size - 1] = 1;
+  return conditional.map((c) => lower + (1 - lower - upper) * c);
+}
+
+await check("§3", "reconstructed runs, aggregated, vs the submitted CDF", async () => {
+  if (!continuousRows.length) return ["SKIP", "no numeric/discrete rows"];
+  const lines = continuousRows.map((f) => {
+    const xs = f.raw.question_details.scaling.continuous_range;
+    const runs = f.raw.run_values.map((v: Row) => specCdf(v.spec, xs));
+    const aggregate = f.raw.extra?.geometry?.use_pmf
+      ? (() => {
+          const pmf = xs.map((_: number, k: number) =>
+            runs.reduce((s: number, c: number[]) => s + (c[k] - (k ? c[k - 1] : 0)), 0) / runs.length);
+          let acc = 0;
+          return pmf.map((p: number) => (acc = Math.min(1, acc + p)));
+        })()
+      : quantileAverage(runs);
+    const gap = Math.max(...aggregate.map((p: number, k: number) => Math.abs(p - f.raw.final_forecast[k])));
+    return `${f.question_id}: max |aggregate − submitted| = ${gap.toFixed(4)}`;
+  });
+  return ["INFO", lines.join("\n")];
+});
+
 await check("§3", "raw.llm_calls matches the llm_calls table row count", async () => {
   const sample = v2.slice(0, 20);
   const bad: string[] = [];
@@ -559,6 +637,14 @@ await check("§7", "freshness — newest forecast and recent runs", async () => 
   const recent = [...perRun.entries()].slice(0, 8)
     .map(([id, r]) => `${r.at?.slice(0, 16)}  ${id}  ${r.workflow}  ${r.n}q ${r.submitted} submitted`);
   return ["INFO", `${forecasts.length} forecasts, ${runs.length} runs, newest ${newest}\n${recent.join("\n")}`];
+});
+
+// raw.tournaments was added by the bot on 2026-09-27 (additive, no version
+// bump). Rows before that have none; the reader looks those up from Metaculus.
+await check("§3", "rows recording raw.tournaments (bot, 2026-09-27 on)", async () => {
+  const withKey = forecasts.filter((f) => Array.isArray(f.raw.tournaments));
+  const names = [...new Set(withKey.flatMap((f) => f.raw.tournaments.map((t: Row) => t.name ?? t.slug)))];
+  return ["INFO", `${withKey.length}/${forecasts.length} rows${names.length ? `: ${names.join(", ")}` : " — older rows are looked up live"}`];
 });
 
 await check("§7", "question 45809 is still missing (open item)", async () => {
