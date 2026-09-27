@@ -152,6 +152,11 @@ when `tool_choice` forces one. Unforced, the larger models often answer from
 memory instead, so a system prompt that says when to reach for a tool matters.
 Anything agentic here means running the tools yourself.
 
+> Emitting one well-formed call is **not** the same as being able to drive a
+> multi-step loop, and the two come apart on this gateway — `llama3.1:8b` has
+> the first ability and not the second. See *Driving a multi-step tool loop*
+> under Models before choosing a model for anything agentic.
+
 ### POST /v1/embeddings
 
 ```bash
@@ -229,6 +234,50 @@ Picking one:
 > ⚠️ The DocHub models page contradicts itself: its table lists `qwen3.8:27b` and
 > `ornith:35b`, while the recommendations below it say `qwen3.6:27b` and
 > `ornith1.0:35b`. Resolve against `GET /v1/models` — that's authoritative.
+
+### Driving a multi-step tool loop
+
+A stricter bar than "can it emit a tool call". That question is whether the model
+produces well-formed JSON; this one is whether it can run a dispatcher — call a
+lookup tool, read a shortlist back, then construct valid parameters for something
+it was told about only in that reply. Those are different abilities, and the
+smaller models have the first without the second.
+
+Measured 2026-09-06. Same question to each ("How many US banks failed between
+January and August 2026?", true answer four), two tools, six steps:
+
+| Model | | Result |
+| --- | --- | --- |
+| `gemma4:26b` | PASS | Found the source, called it, 4 rows, cited it correctly. |
+| `qwen3.6:35b` | PASS | One call rejected on parameters; it read the error, corrected it, then answered. The recovery path working. |
+| `qwen3.8:27b` | PASS | Clean on the first attempt. |
+| `llama3.1:8b` | **FAIL** | Called the lookup, was handed the right source, then never called it — and answered "0 bank failures" with an invented URL, an invented query date, and the sentence "This answer rests on Tier A evidence". Forcing `tool_choice` did not fix it: it then emitted text *shaped* like a tool call, with parameter names the schema does not have, as its answer. |
+
+A model missing from this list is unverified, not known-broken. Add one once you
+have watched it complete a turn with a real tool result behind the answer.
+
+**A loop shape that works.** Tools forced at the start, denied at the end:
+
+| Step | `tool_choice` | Why |
+| --- | --- | --- |
+| 0–1 | `required` | Step 0 forces the lookup. Step 1 forces a call *using what the lookup returned* — the step models most often skip. |
+| middle | `auto` | Free to look further, fix a bad parameter, or answer. |
+| last | `none` | Otherwise a turn can end on a tool result with no answer after it. |
+
+Two details that are load-bearing:
+
+- **On the final step, swap the system prompt as well as denying tools.** Denial
+  alone is not enough — measured on `qwen3.8:27b`, a model denied tools without
+  being *told why* signs off mid-thought with "let me check" and the reader gets
+  nothing. Say the budget is gone and to answer with what it already has.
+- **Budget about six steps.** The floor for a researched answer is
+  lookup → call → call → answer, which is already four with no room to correct a
+  bad parameter. Six leaves one recovery and one follow-up.
+
+**Every step is a request against the 30/minute limit below**, and all of them
+share one wall clock with the final answer. A six-step loop with parallel tool
+calls inside each step is a realistic way to hit the rate limit from a single
+user action.
 
 ## Usage limits
 

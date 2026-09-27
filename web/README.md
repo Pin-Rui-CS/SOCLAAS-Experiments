@@ -14,7 +14,8 @@ so the site and the Python tools share one file. Real environment variables
 always take precedence, so nothing changes on Vercel.
 
 Four variables are needed: `SOCLAAS_API_KEY`, `SOCLAAS_BASE_URL`,
-`APP_PASSWORD`, `AUTH_SECRET`. See `.env.local.example`.
+`APP_PASSWORD`, `AUTH_SECRET`. See `.env.local.example`, which also lists the
+optional ones (web search, the forecast library).
 
 ## Structure
 

@@ -9,6 +9,7 @@
     "lint": "npm --prefix web run lint",
     "install:web": "npm --prefix web install",
     "test:forecaster": "python projects/forecaster/test_soclaas_forecast.py",
-    "test:apiagent": "node --env-file-if-exists=.env web/src/projects/apiagent/server/smoke.ts"
+    "test:apiagent": "node --env-file-if-exists=.env web/src/projects/apiagent/server/smoke.ts",
+    "test:library": "node --env-file-if-exists=.env web/src/projects/library/server/verify.ts"
   }
 }

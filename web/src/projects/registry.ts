@@ -2,6 +2,7 @@ import type { ProjectManifest } from "./types";
 import { apiAgentManifest } from "./apiagent/manifest";
 import { chatManifest } from "./chat/manifest";
 import { forecasterManifest } from "./forecaster/manifest";
+import { libraryManifest } from "./library/manifest";
 
 /**
  * The single place that knows every project exists.
@@ -18,6 +19,7 @@ export const projects: ProjectManifest[] = [
   chatManifest,
   apiAgentManifest,
   forecasterManifest,
+  libraryManifest,
 ];
 
 export function getProject(slug: string): ProjectManifest | undefined {
