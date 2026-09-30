@@ -14,7 +14,9 @@ export function Markdown({ children }: { children: string }) {
   return (
     <div className="md">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        // Single tildes are "approximately" in forecasting text (~$200B … ~$0.8T), not
+        // strikethrough; GFM's default struck out everything between two of them.
+        remarkPlugins={[[remarkGfm, { singleTilde: false }]]}
         components={{
           code({ className, children, ...props }) {
             const isBlock = /language-/.test(className ?? "");

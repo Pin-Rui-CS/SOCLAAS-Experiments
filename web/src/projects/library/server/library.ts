@@ -230,6 +230,7 @@ export async function getForecast(
     questionId: row.question_id,
     postId: row.post_id,
     title: row.title ?? qd.title ?? `Question ${row.question_id}`,
+    competitions: competitionsOf({ tournaments: raw.tournaments, cli_tournaments: raw.provenance?.cli?.tournaments }),
     type,
     runAt: row.run_at,
     workflow: row.workflow,

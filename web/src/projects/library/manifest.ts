@@ -12,6 +12,11 @@ export const libraryManifest: ProjectManifest = {
     "answer, the research it read, what it cost, and — once the question " +
     "resolves — its score. This reads that library. It writes nothing and " +
     "contains no forecasting code.\n\n" +
+    "Discuss opens a side chat that already knows the forecast on screen — its " +
+    "question, every run's answer, the evidence check and the research brief — and " +
+    "can read any transcript or research file, or the web if you allow it. " +
+    "Download hands out a question's files, or one self-contained brief for " +
+    "another AI.\n\n" +
     "The contract is FORECAST-LIBRARY-HANDOFF.md at the repo root, as corrected " +
     "by `npm run test:library`, which checks each of its claims against the " +
     "live database.",

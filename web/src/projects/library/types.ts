@@ -117,6 +117,8 @@ export type ForecastDetail = {
   postId: number | null;
   title: string;
   type: string;
+  /** `raw.tournaments` when recorded; the client's looked-up names live on LibraryItem. */
+  competitions: Competition[] | null;
   runAt: string | null;
   workflow: string | null;
   runUrl: string | null;

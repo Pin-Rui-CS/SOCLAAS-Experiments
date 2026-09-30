@@ -5,6 +5,7 @@ import { fileSections, fileUrl, getJson } from "../api";
 import type { FileKey, ForecastDetail, LiveQuestion, RunEntry } from "../types";
 import { Markdown } from "./Markdown";
 import { SeriesTable, runColor } from "./DistributionCharts";
+import { downloadHref } from "./DownloadMenu";
 import { ValueView, formatDate, formatNumber, pct } from "./Value";
 import {
   Collapsible,
@@ -413,7 +414,7 @@ function FilesPanel({ runId, questionId }: { runId: string; questionId: number }
 
   return (
     <Section>
-      <div style={{ display: "flex", gap: 4, marginBottom: 12, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
         {FILE_TABS.map(({ key, label }) => (
           <button
             key={key}
@@ -424,6 +425,11 @@ function FilesPanel({ runId, questionId }: { runId: string; questionId: number }
             {label}
           </button>
         ))}
+        {text != null && (
+          <a href={downloadHref(runId, questionId, file)} download style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--accent)" }}>
+            Download {file}.md
+          </a>
+        )}
       </div>
       {error && <Notice tone="warn">{error}</Notice>}
       {!error && !(file in texts) && <Faint>Loading…</Faint>}

@@ -9,9 +9,12 @@ import { DetailTabs, TABS, type TabKey } from "./components/DetailTabs";
 import { vizPaletteCss } from "./components/DistributionCharts";
 import { formatDate } from "./components/Value";
 import { Notice } from "./components/ui";
+import { ChatPanel } from "./components/ChatPanel";
+import { DownloadMenu } from "./components/DownloadMenu";
 import type { ForecastDetail, LibraryItem } from "./types";
 
 const TAB_STORAGE_KEY = "soclaas.library.tab";
+const CHAT_OPEN_KEY = "soclaas.library.chatOpen";
 
 function initialTab(): TabKey {
   try {
@@ -29,6 +32,14 @@ export default function LibraryView() {
   const [selected, setSelected] = useState<string | null>(null);
   // The open tab carries over from one forecast to the next, and across visits.
   const [tab, setTab] = useState<TabKey>(initialTab);
+  // Only read once a forecast is on screen, so server and client render the same first frame.
+  const [chatOpen, setChatOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(CHAT_OPEN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
 
   const { items, pending, failed } = useCompetitions(rawItems);
 
@@ -52,6 +63,25 @@ export default function LibraryView() {
 
   const current = items?.find((i) => keyOf(i) === selected) ?? null;
 
+  const toggleChat = (open: boolean) => {
+    setChatOpen(open);
+    try {
+      localStorage.setItem(CHAT_OPEN_KEY, open ? "1" : "0");
+    } catch {
+      // per-browser convenience only
+    }
+  };
+
+  // Escape closes the discussion where it overlays the page.
+  useEffect(() => {
+    if (!chatOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && window.matchMedia("(max-width: 1199px)").matches) toggleChat(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [chatOpen]);
+
   return (
     <div className="lib">
       <ForecastList
@@ -65,17 +95,34 @@ export default function LibraryView() {
 
       <main className="lib-detail">
         {current ? (
-          <Detail key={keyOf(current)} item={current} tab={tab} onTab={chooseTab} />
+          <Detail key={keyOf(current)} item={current} tab={tab} onTab={chooseTab} chatOpen={chatOpen} onToggleChat={() => toggleChat(!chatOpen)} />
         ) : (
           !error && <div style={{ padding: 32, color: "var(--text-faint)" }}>{items ? "Select a forecast." : "Loading…"}</div>
         )}
       </main>
+
+      {current && chatOpen && (
+        <>
+          <div className="lib-chat-backdrop" onClick={() => toggleChat(false)} />
+          <aside className="lib-chat" aria-label="Discuss this forecast">
+            <ChatPanel key={keyOf(current)} runId={current.runId} questionId={current.questionId} onClose={() => toggleChat(false)} />
+          </aside>
+        </>
+      )}
 
       <style>{`
         ${vizPaletteCss(".lib")}
         .lib { display: flex; height: 100%; min-height: 0; }
         .lib-list { width: 320px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: var(--bg-subtle); min-height: 0; }
         .lib-detail { flex: 1; min-width: 0; overflow-y: auto; }
+        .lib-chat { width: 400px; flex-shrink: 0; border-left: 1px solid var(--border); min-height: 0; }
+        .lib-chat-backdrop { display: none; }
+        .lib-menu-item:hover { background: var(--bg-hover); }
+        /* Under 1200px three columns get cramped: the discussion overlays the detail instead. */
+        @media (max-width: 1199px) {
+          .lib-chat { position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 100vw); z-index: 30; box-shadow: -8px 0 28px rgba(0,0,0,0.18); }
+          .lib-chat-backdrop { display: block; position: fixed; inset: 0; z-index: 29; background: rgba(0,0,0,0.3); }
+        }
         @media (max-width: 800px) {
           .lib { flex-direction: column; overflow-y: auto; }
           .lib-list { width: 100%; max-height: 45vh; border-right: none; border-bottom: 1px solid var(--border); }
@@ -86,7 +133,19 @@ export default function LibraryView() {
   );
 }
 
-function Detail({ item, tab, onTab }: { item: LibraryItem; tab: TabKey; onTab: (tab: TabKey) => void }) {
+function Detail({
+  item,
+  tab,
+  onTab,
+  chatOpen,
+  onToggleChat,
+}: {
+  item: LibraryItem;
+  tab: TabKey;
+  onTab: (tab: TabKey) => void;
+  chatOpen: boolean;
+  onToggleChat: () => void;
+}) {
   const [detail, setDetail] = useState<ForecastDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -117,7 +176,7 @@ function Detail({ item, tab, onTab }: { item: LibraryItem; tab: TabKey; onTab: (
         {!item.submitted && !item.abstained && (
           <span style={{ color: "var(--warn-text)" }}><span style={{ color: "var(--text-faint)", marginRight: 8 }}>·</span>not submitted</span>
         )}
-        <span style={{ marginLeft: "auto", display: "flex", gap: 14 }}>
+        <span style={{ marginLeft: "auto", display: "flex", gap: 14, alignItems: "center" }}>
           {item.postId && (
             <a href={`https://www.metaculus.com/questions/${item.postId}/`} target="_blank" rel="noopener noreferrer" style={link}>
               Metaculus ↗
@@ -128,6 +187,24 @@ function Detail({ item, tab, onTab }: { item: LibraryItem; tab: TabKey; onTab: (
               GitHub run ↗
             </a>
           )}
+          <DownloadMenu runId={item.runId} questionId={item.questionId} />
+          <button
+            type="button"
+            onClick={onToggleChat}
+            aria-pressed={chatOpen}
+            style={{
+              padding: "4px 12px",
+              borderRadius: "var(--radius)",
+              border: "1px solid var(--accent)",
+              background: chatOpen ? "var(--accent)" : "transparent",
+              color: chatOpen ? "var(--accent-fg)" : "var(--accent)",
+              cursor: "pointer",
+              fontSize: 12.5,
+              fontWeight: 550,
+            }}
+          >
+            {chatOpen ? "Hide discussion" : "Discuss"}
+          </button>
         </span>
       </div>
 

@@ -2,6 +2,8 @@ import "server-only";
 import { Supabase, SupabaseError } from "./supabase.ts";
 import { getFile, getForecast, getLive, getTournaments, listLibrary, validKey } from "./library.ts";
 import type { FileKey } from "../types.ts";
+import { DOWNLOADS, download, listDownloads, type DownloadKey } from "./download.ts";
+import { chat } from "./chat.ts";
 
 /**
  * The forecast library reader's one endpoint. Read-only, GET, dispatched on
@@ -12,6 +14,10 @@ import type { FileKey } from "../types.ts";
  *   ?view=file&run=…&q=…&file=research|runs|audit|evolution
  *   ?view=live&post=<post_id>
  *   ?view=tournaments&post=<post_id>   (rows that predate raw.tournaments)
+ *   ?view=downloads&run=…&q=…           (what can be downloaded, with sizes)
+ *   ?view=download&run=…&q=…&file=brief|forecast|research|runs|evolution|audit|trace|all
+ *
+ * POST is the Discuss chat (chat.ts): a streamed conversation about one forecast.
  *
  * Credentials are this project's own and server-side only. The site signs in
  * to Supabase as the library's owner — FORECAST-LIBRARY-HANDOFF.md §1's
@@ -55,6 +61,18 @@ export async function GET(request: Request) {
 
   try {
     if (view === "list") return json({ items: await listLibrary(db()) });
+
+    if (view === "download" || view === "downloads") {
+      const run = params.get("run");
+      const q = params.get("q");
+      if (!validKey(run, q)) return json({ error: "bad run or question id" }, 400);
+      if (view === "downloads") return json(await listDownloads(db(), run!, q!));
+      const file = params.get("file") as DownloadKey;
+      if (file !== "all" && !(DOWNLOADS as readonly string[]).includes(file)) {
+        return json({ error: "unknown file" }, 400);
+      }
+      return await download(db(), run!, q!, file);
+    }
 
     if (view === "forecast" || view === "file") {
       const run = params.get("run");
@@ -100,5 +118,14 @@ export async function GET(request: Request) {
       },
       502,
     );
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    return await chat(request, db);
+  } catch (error) {
+    if (error instanceof ConfigError) return json({ error: error.message, unconfigured: true }, 503);
+    return json({ error: error instanceof Error ? error.message : String(error) }, 502);
   }
 }
