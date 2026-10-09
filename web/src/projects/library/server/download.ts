@@ -15,7 +15,7 @@ import { buildContext } from "./context.ts";
 import { zip } from "./zip.ts";
 import type { FileKey } from "../types.ts";
 
-export const DOWNLOADS = ["brief", "forecast", "research", "runs", "evolution", "audit", "trace"] as const;
+export const DOWNLOADS = ["brief", "forecast", "research", "runs", "evolution", "audit", "diagnostics", "trace"] as const;
 export type DownloadKey = (typeof DOWNLOADS)[number] | "all";
 
 /** Past this the zip would crowd Vercel's ~4.5MB function response limit. */
@@ -28,6 +28,7 @@ const FILENAMES: Record<(typeof DOWNLOADS)[number], string> = {
   runs: "runs.md",
   evolution: "evolution.md",
   audit: "audit.md",
+  diagnostics: "diagnostics.md",
   trace: "trace.tar.gz",
 };
 
@@ -38,6 +39,7 @@ const TYPES: Record<(typeof DOWNLOADS)[number], string> = {
   runs: "text/markdown; charset=utf-8",
   evolution: "text/markdown; charset=utf-8",
   audit: "text/markdown; charset=utf-8",
+  diagnostics: "text/markdown; charset=utf-8",
   trace: "application/gzip",
 };
 
@@ -56,7 +58,7 @@ async function load(db: Supabase, runId: string, questionId: string, only?: (typ
   const files: Loaded["files"] = {};
 
   if (want("brief")) files.brief = encode(ctx.markdown + "\n");
-  for (const f of ["research", "runs", "evolution", "audit"] as FileKey[]) {
+  for (const f of ["research", "runs", "evolution", "audit", "diagnostics"] as FileKey[]) {
     const text = ctx.texts[f];
     if (want(f) && text != null) files[f] = encode(text);
   }
@@ -127,6 +129,7 @@ export async function listDownloads(db: Supabase, runId: string, questionId: str
       runs: size(ctx.texts.runs),
       evolution: size(ctx.texts.evolution),
       audit: size(ctx.texts.audit),
+      diagnostics: size(ctx.texts.diagnostics),
       trace: traceEntry ? traceSize : null,
     } satisfies Record<(typeof DOWNLOADS)[number], number | null>,
   };

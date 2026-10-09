@@ -101,10 +101,11 @@ export async function chat(request: Request, db: () => Supabase): Promise<Respon
         "Read one section of this forecast's stored files. research: the full research (a preamble, " +
         "the compiled brief, then one section per search provider). runs: the forecasting prompt, then " +
         "each run's complete reasoning ('Run 1', 'Run 2', …). evolution: how the forecast changed. " +
-        "audit: token usage and sources. Section names are listed in the briefing under 'Other stored " +
+        "audit: token usage and sources. diagnostics: the post-run diagnostic report, when one exists. " +
+        "Section names are listed in the briefing under 'Other stored " +
         "files'. Long sections come in pages of 24K characters; pass nextOffset to continue.",
       inputSchema: z.object({
-        file: z.enum(FILE_KEYS as [string, ...string[]]).describe("research, runs, evolution or audit"),
+        file: z.enum(FILE_KEYS as [string, ...string[]]).describe("research, runs, evolution, audit or diagnostics"),
         section: z.string().optional().describe('Section name, e.g. "Run 3" or "Provider: AskNews". Omit for the whole file.'),
         offset: z.number().int().min(0).optional().describe("Character offset for the next page."),
       }),

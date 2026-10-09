@@ -287,7 +287,10 @@ function build(spec: Params): Cdf {
 function coercePmfValue(value: unknown): number {
   if (typeof value === "number") return value;
   let text = String(value).trim().replace(/,/g, "");
+  // Open-bucket labels: "96+" is 96 and up, "≤55" is 55 and below (seen on 46102, 2026-10). The
+  // number is the bucket's edge, which lands on the right side of the question's bound either way.
   if (text.endsWith("+")) text = text.slice(0, -1);
+  text = text.replace(/^(?:≤|≥|<=|>=|<|>)\s*/, "");
   const n = Number(text);
   if (!Number.isFinite(n)) throw new Error(`pmf: bad value ${value}`);
   return n;

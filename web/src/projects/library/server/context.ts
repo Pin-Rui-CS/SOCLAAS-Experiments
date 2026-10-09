@@ -15,12 +15,12 @@
  */
 
 import { Supabase } from "./supabase.ts";
-import { getFile, getForecast } from "./library.ts";
+import { getDiagnostics, getFile, getForecast } from "./library.ts";
 import { summarizeCdf } from "../cdf.ts";
 import { fileSections } from "../files.ts";
-import type { FileKey, ForecastDetail, ForecastValue } from "../types.ts";
+import type { DiagnosticCheck, FileKey, ForecastDetail, ForecastValue } from "../types.ts";
 
-export const FILE_KEYS: FileKey[] = ["research", "runs", "evolution", "audit"];
+export const FILE_KEYS: FileKey[] = ["research", "runs", "evolution", "audit", "diagnostics"];
 
 const BACKGROUND_CAP = 4_000;
 const BRIEF_CAP = 40_000;
@@ -43,14 +43,15 @@ export async function buildContext(db: Supabase, runId: string, questionId: stri
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.value;
 
-  const [detail, ...files] = await Promise.all([
+  const [detail, checks, ...files] = await Promise.all([
     getForecast(db, runId, questionId),
+    getDiagnostics(db, runId, questionId),
     ...FILE_KEYS.map((f) => getFile(db, runId, questionId, f)),
   ]);
   if (!detail) throw new NotFoundError(`no forecast ${runId}/${questionId}`);
 
   const texts = Object.fromEntries(FILE_KEYS.map((f, i) => [f, files[i]])) as Record<FileKey, string | null>;
-  const value = { detail, texts, markdown: render(detail, texts) };
+  const value = { detail, texts, markdown: render(detail, texts, checks) };
 
   cache.set(key, { at: Date.now(), value });
   // Drop the oldest once the cache is full; each entry holds a few hundred KB of text.
@@ -104,7 +105,7 @@ function describeValue(value: ForecastValue | null, unit: string): string {
   }
 }
 
-function render(d: ForecastDetail, texts: Record<FileKey, string | null>): string {
+function render(d: ForecastDetail, texts: Record<FileKey, string | null>, checks: DiagnosticCheck[]): string {
   const unit = d.question.unit;
   const lines: string[] = [];
   const push = (...xs: string[]) => lines.push(...xs);
@@ -129,7 +130,10 @@ function render(d: ForecastDetail, texts: Record<FileKey, string | null>): strin
   push("", "## The bot's forecast", "");
   push(`Submitted: ${describeValue(d.final, unit)}`, "");
   const rule =
-    d.type === "binary" ? "the median of the used runs"
+    d.type === "binary"
+      ? d.tiebreakerUsed
+        ? "a tiebreaker run, because the runs disagreed widely (normally the median)"
+        : "the median of the used runs"
     : d.type === "multiple_choice" ? "the mean of the used runs"
     : "a quantile average of the used runs' CDFs, then smoothed";
   push(`Aggregation: ${rule}. Dropped runs are excluded.`, "", "Each run (ensemble member):", "");
@@ -157,6 +161,22 @@ function render(d: ForecastDetail, texts: Record<FileKey, string | null>): strin
     if (a.closest_available) push(`- Closest available: ${a.closest_available}`);
   }
   if (d.degradedProviders.length) push(`- Degraded search providers: ${d.degradedProviders.join(", ")}`);
+
+  if (d.postedComment) push("", "## Comment posted on Metaculus", "", d.postedComment);
+  if (d.qwenOutage) push("", `NOTE: this forecast ran on degraded research because SoCLaaS was down: ${d.qwenOutage}`);
+
+  // Diagnostics: only for forecasts someone ran "Diagnose a forecast" on.
+  if (checks.length) {
+    const flagged = checks.filter((c) => c.status === "fail" || c.status === "warn");
+    const count = (s: string) => checks.filter((c) => c.status === s).length;
+    push("", "## Diagnostics (the bot's own post-run checks)", "");
+    push(`${count("fail")} fail, ${count("warn")} warn, ${count("pass")} pass, ${count("info")} info, ${count("skipped")} skipped. "AI-assisted" checks were extracted by Qwen and are less certain.`, "");
+    for (const c of flagged) {
+      push(`- ${c.status.toUpperCase()} · ${c.title}${c.method === "qwen" ? " (AI-assisted)" : ""}: ${c.detail}`);
+    }
+    if (!flagged.length) push("- Nothing failed or warned.");
+    push("", 'The full report with evidence lines is readable as file "diagnostics".');
+  }
 
   // 4. The brief
   const brief = texts.research

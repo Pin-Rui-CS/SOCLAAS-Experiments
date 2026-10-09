@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { fileSections, fileUrl, getJson } from "../api";
-import type { FileKey, ForecastDetail, LiveQuestion, RunEntry } from "../types";
+import type { DiagnosticsSummary, FileKey, ForecastDetail, LiveQuestion, RunEntry } from "../types";
 import { Markdown } from "./Markdown";
 import { SeriesTable, runColor } from "./DistributionCharts";
 import { downloadHref } from "./DownloadMenu";
+import { DiagnosticsPanel } from "./Diagnostics";
 import { ValueView, formatDate, formatNumber, pct } from "./Value";
 import {
   Collapsible,
@@ -24,11 +25,12 @@ import {
 /** Prose reads best at ~75 characters a line; tables keep the full width. */
 const prose = { maxWidth: "78ch" } as const;
 
-export type TabKey = "models" | "evidence" | "question" | "cost" | "files";
+export type TabKey = "models" | "evidence" | "diagnostics" | "question" | "cost" | "files";
 
-export const TABS: { key: TabKey; label: string }[] = [
+export const ALL_TABS: { key: TabKey; label: string }[] = [
   { key: "models", label: "Models" },
   { key: "evidence", label: "Evidence" },
+  { key: "diagnostics", label: "Diagnostics" },
   { key: "question", label: "Question" },
   { key: "cost", label: "Cost" },
   { key: "files", label: "Files" },
@@ -42,15 +44,21 @@ export const TABS: { key: TabKey; label: string }[] = [
 export function DetailTabs({
   detail: d,
   unit,
-  tab,
+  tab: chosen,
   onTab,
+  diagnostics,
 }: {
   detail: ForecastDetail;
   unit: string;
   tab: TabKey;
   onTab: (tab: TabKey) => void;
+  /** From diagnostics_summary; the Diagnostics tab exists only when this is set. */
+  diagnostics: DiagnosticsSummary | null;
 }) {
   const refs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const TABS = ALL_TABS.filter((t) => t.key !== "diagnostics" || diagnostics);
+  // A remembered tab this forecast does not have (Diagnostics) falls back to Models.
+  const tab: TabKey = TABS.some((t) => t.key === chosen) ? chosen : "models";
 
   // Roving focus: arrows move between tabs and select, as the ARIA tabs pattern does.
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -106,6 +114,14 @@ export function DetailTabs({
               }}
             >
               {label}
+              {key === "diagnostics" && diagnostics && (
+                <span style={{ marginLeft: 6, fontSize: 11.5, fontWeight: 600 }}>
+                  {diagnostics.fails > 0 && <span style={{ color: "var(--st-fail)" }}>{diagnostics.fails} fail</span>}
+                  {diagnostics.fails > 0 && diagnostics.warns > 0 && <span style={{ color: "var(--text-faint)" }}> · </span>}
+                  {diagnostics.warns > 0 && <span style={{ color: "var(--st-warn)" }}>{diagnostics.warns} warn</span>}
+                  {!diagnostics.fails && !diagnostics.warns && <span style={{ color: "var(--st-pass)" }}>ok</span>}
+                </span>
+              )}
               {badge[key] && (
                 <span style={{ marginLeft: 6, fontSize: 11.5, color: "var(--text-faint)", fontWeight: 450 }}>{badge[key]}</span>
               )}
@@ -117,6 +133,7 @@ export function DetailTabs({
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} style={{ paddingTop: 4 }}>
         {tab === "models" && <ModelsPanel detail={d} unit={unit} />}
         {tab === "evidence" && <EvidencePanel detail={d} />}
+        {tab === "diagnostics" && <DiagnosticsPanel runId={d.runId} questionId={d.questionId} summary={diagnostics} />}
         {tab === "question" && <QuestionPanel detail={d} unit={unit} />}
         {tab === "cost" && <CostPanel detail={d} />}
         {tab === "files" && <FilesPanel runId={d.runId} questionId={d.questionId} />}
@@ -141,6 +158,21 @@ function ModelCell({ run }: { run: RunEntry }) {
 }
 
 function ModelsPanel({ detail: d, unit }: { detail: ForecastDetail; unit: string }) {
+  return (
+    <>
+      {d.postedComment && (
+        <Section title="Comment posted on Metaculus">
+          <div style={{ ...prose, fontSize: 13.5, borderLeft: "3px solid var(--border-strong)", paddingLeft: 12 }}>
+            <Markdown>{d.postedComment}</Markdown>
+          </div>
+        </Section>
+      )}
+      <ModelsBody detail={d} unit={unit} />
+    </>
+  );
+}
+
+function ModelsBody({ detail: d, unit }: { detail: ForecastDetail; unit: string }) {
   if (!d.runs.length) return <Section><Faint>No ensemble recorded (schema v{d.schemaVersion}).</Faint></Section>;
 
   // Numeric / discrete: quantiles per run, then each run's mixture on demand.
@@ -151,7 +183,8 @@ function ModelsPanel({ detail: d, unit }: { detail: ForecastDetail; unit: string
           <SeriesTable curves={d.curves} unit={unit} />
           {d.runs.some((r) => r.dropped) && (
             <Faint style={{ marginTop: 8 }}>
-              Dropped and excluded from the blend: {d.runs.filter((r) => r.dropped).map((r) => `run ${r.index} (${r.model})`).join(", ")}.
+              Dropped and excluded from the blend:{" "}
+              {d.runs.filter((r) => r.dropped).map((r) => `run ${r.index} (${r.model})${r.error ? ` — ${r.error}` : ""}`).join("; ")}.
             </Faint>
           )}
         </Section>
@@ -194,7 +227,10 @@ function ModelsPanel({ detail: d, unit }: { detail: ForecastDetail; unit: string
             </tr>
             {d.runs.map((run) => (
               <tr key={run.index} style={{ opacity: run.dropped ? 0.55 : 1 }}>
-                <td style={{ ...cellStyle, whiteSpace: "normal" }}><ModelCell run={run} /></td>
+                <td style={{ ...cellStyle, whiteSpace: "normal" }}>
+                  <ModelCell run={run} />
+                  {run.dropped && run.error && <Faint style={{ marginTop: 2 }}>Dropped: {run.error}</Faint>}
+                </td>
                 {columns.map((c) => {
                   const v = valueOf(run.value, c);
                   return <td key={c} style={numStyle}>{run.dropped ? "—" : v == null ? "—" : pct(v)}</td>;
@@ -205,7 +241,11 @@ function ModelsPanel({ detail: d, unit }: { detail: ForecastDetail; unit: string
         </table>
       </div>
       <Faint style={{ marginTop: 8 }}>
-        {d.type === "binary" ? "Submitted is the median of the models." : "Submitted is the mean of the models."}
+        {d.type !== "binary"
+          ? "Submitted is the mean of the models."
+          : d.tiebreakerUsed
+            ? "The models disagreed widely, so the bot submitted a tiebreaker run instead of their median."
+            : "Submitted is the median of the models."}
       </Faint>
     </Section>
   );

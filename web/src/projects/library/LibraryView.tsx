@@ -5,7 +5,8 @@ import { getJson, keyOf, typeLabel } from "./api";
 import { useCompetitions } from "./useCompetitions";
 import { ForecastList } from "./components/ForecastList";
 import { Glance } from "./components/Glance";
-import { DetailTabs, TABS, type TabKey } from "./components/DetailTabs";
+import { ALL_TABS, DetailTabs, type TabKey } from "./components/DetailTabs";
+import { statusCss } from "./components/Diagnostics";
 import { vizPaletteCss } from "./components/DistributionCharts";
 import { formatDate } from "./components/Value";
 import { Notice } from "./components/ui";
@@ -19,7 +20,7 @@ const CHAT_OPEN_KEY = "soclaas.library.chatOpen";
 function initialTab(): TabKey {
   try {
     const saved = localStorage.getItem(TAB_STORAGE_KEY);
-    if (TABS.some((t) => t.key === saved)) return saved as TabKey;
+    if (ALL_TABS.some((t) => t.key === saved)) return saved as TabKey;
   } catch {
     // no storage — default below
   }
@@ -112,6 +113,7 @@ export default function LibraryView() {
 
       <style>{`
         ${vizPaletteCss(".lib")}
+        ${statusCss(".lib")}
         .lib { display: flex; height: 100%; min-height: 0; }
         .lib-list { width: 320px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: var(--bg-subtle); min-height: 0; }
         .lib-detail { flex: 1; min-width: 0; overflow-y: auto; }
@@ -214,7 +216,7 @@ function Detail({
       {detail && (
         <>
           <Glance detail={detail} unit={unit} />
-          <DetailTabs detail={detail} unit={unit} tab={tab} onTab={onTab} />
+          <DetailTabs detail={detail} unit={unit} tab={tab} onTab={onTab} diagnostics={item.diagnostics} />
         </>
       )}
     </div>

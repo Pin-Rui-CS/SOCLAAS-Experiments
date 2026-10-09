@@ -5,6 +5,7 @@ import { TYPE_LABELS, keyOf, typeLabel } from "../api";
 import type { LibraryItem } from "../types";
 import { valueSummary } from "./Value";
 import { Notice } from "./ui";
+import { DiagnosticsBadge } from "./Diagnostics";
 
 /** Sentinel for "no competition recorded or found". */
 const NONE = "__none__";
@@ -171,6 +172,11 @@ export function ForecastList({
                 {competitionLabel ? ` · ${competitionLabel}` : ""}
                 {!item.submitted && <span style={{ color: "var(--warn-text)" }}> · not submitted</span>}
               </div>
+              {item.diagnostics && (
+                <div style={{ marginTop: 3, fontSize: 11.5 }}>
+                  <DiagnosticsBadge summary={item.diagnostics} />
+                </div>
+              )}
             </button>
           );
         })}

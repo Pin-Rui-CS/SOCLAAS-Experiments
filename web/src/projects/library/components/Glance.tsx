@@ -21,6 +21,14 @@ export function Glance({ detail: d, unit }: { detail: ForecastDetail; unit: stri
         padding: "18px 20px",
       }}
     >
+      {d.qwenOutage && (
+        <div
+          role="note"
+          style={{ marginBottom: 14, padding: "8px 12px", borderRadius: "var(--radius)", fontSize: 13, background: "var(--warn-bg)", border: "1px solid var(--warn-border)", color: "var(--warn-text)" }}
+        >
+          <strong>Degraded research:</strong> SoCLaaS was down during this run, so the forecast worked from reduced research. {d.qwenOutage}
+        </div>
+      )}
       <div className="glance-top">
         <div style={{ minWidth: 0 }}>
           <Label>Forecast</Label>

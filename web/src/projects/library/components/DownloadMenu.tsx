@@ -11,6 +11,7 @@ const ENTRIES: { key: string; label: string; hint?: string }[] = [
   { key: "runs", label: "runs.md", hint: "prompt + every run's reasoning" },
   { key: "evolution", label: "evolution.md" },
   { key: "audit", label: "audit.md", hint: "tokens, cost, sources" },
+  { key: "diagnostics", label: "diagnostics.md", hint: "post-run checks, if diagnosed" },
   { key: "trace", label: "trace.tar.gz", hint: "every scrape and prompt" },
   { key: "brief", label: "Brief for another AI (.md)", hint: "the whole forecast in one file" },
 ];

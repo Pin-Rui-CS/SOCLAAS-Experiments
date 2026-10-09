@@ -332,6 +332,9 @@ await check("§3", "final_forecast: binary = median*, multiple choice = mean", a
     const final = f.raw.final_forecast;
     if (!values.length || final == null) continue;
     if (f.question_type === "binary") {
+      // When the runs disagree widely the bot picks a tiebreaker run instead of the median
+      // (extra.tiebreaker_used — 46107: runs 9–40%, submitted 28%). Not in either handoff.
+      if (f.raw.extra?.tiebreaker_used) continue;
       checked++;
       if (!close(median(values), final, 1e-3)) bad.push(`${f.question_id}: median ${median(values)} vs final ${final}`);
     } else if (f.question_type === "multiple_choice") {
@@ -645,6 +648,20 @@ await check("§3", "rows recording raw.tournaments (bot, 2026-09-27 on)", async 
   const withKey = forecasts.filter((f) => Array.isArray(f.raw.tournaments));
   const names = [...new Set(withKey.flatMap((f) => f.raw.tournaments.map((t: Row) => t.name ?? t.slug)))];
   return ["INFO", `${withKey.length}/${forecasts.length} rows${names.length ? `: ${names.join(", ")}` : " — older rows are looked up live"}`];
+});
+
+// Diagnostics addendum §10: the relations exist only once 003_run_diagnostics.sql is applied.
+await check("diag", "run_diagnostics / diagnostics_summary are readable", async () => {
+  try {
+    const { rows } = await db.select<Row>("diagnostics_summary", { select: "run_id,question_id,fails,warns", limit: "1000" });
+    const { count } = await db.select("run_diagnostics", { select: "check_id", limit: "1" }, { count: true });
+    return ["PASS", `${rows.length} diagnosed forecasts, ${count} check rows`];
+  } catch (error) {
+    if (error instanceof SupabaseError && (error.status === 404 || /PGRST205/.test(error.body))) {
+      return ["INFO", "not created yet — apply db/migrations/003_run_diagnostics.sql in the bot repo; the reader shows no diagnostics until then"];
+    }
+    throw error;
+  }
 });
 
 await check("§7", "question 45809 is still missing (open item)", async () => {

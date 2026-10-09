@@ -19,13 +19,16 @@
  *   plus the community forecast only when Metaculus actually sends one.
  */
 
-import { Supabase, gunzip } from "./supabase.ts";
+import { Supabase, SupabaseError, gunzip } from "./supabase.ts";
 import { specCdf } from "./distributions.ts";
 import { summarizeCdf } from "../cdf.ts";
+import { DIAGNOSTIC_STATUSES } from "../types.ts";
 import type {
   Competition,
   CostLine,
   Curves,
+  DiagnosticCheck,
+  DiagnosticsSummary,
   FileKey,
   ForecastDetail,
   ForecastValue,
@@ -42,6 +45,7 @@ export const FILE_NAMES: Record<FileKey, string> = {
   runs: "runs.md.gz",
   audit: "audit.md.gz",
   evolution: "evolution.md.gz",
+  diagnostics: "diagnostics.md.gz",
 };
 
 /** §2: `run_id` is `gh-<id>-<attempt>` or `local-<ts>-<host>`. Anything else is refused. */
@@ -106,8 +110,80 @@ function competitionsOf(row: Row | undefined): Competition[] | null {
   return null;
 }
 
+// --- Diagnostics (addendum: run_diagnostics, diagnostics_summary) -----------------
+
+/**
+ * PostgREST's answer when a relation does not exist — the state until the bot
+ * owner applies 003_run_diagnostics.sql. Addendum §10: treat it as "no
+ * diagnostics", never as an error.
+ */
+function isMissingRelation(error: unknown): boolean {
+  return (
+    error instanceof SupabaseError &&
+    (error.status === 404 || /PGRST205|PGRST204|42P01|does not exist|schema cache/i.test(error.body))
+  );
+}
+
+async function optional<T>(read: Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await read;
+  } catch (error) {
+    if (isMissingRelation(error)) return fallback;
+    throw error;
+  }
+}
+
+export async function listDiagnosticSummaries(db: Supabase): Promise<Map<string, DiagnosticsSummary>> {
+  const { rows } = await optional(
+    db.select<Row>("diagnostics_summary", { select: "run_id,question_id,diagnosed_at,fails,warns,passes,skipped", limit: "1000" }),
+    { rows: [] as Row[], count: null },
+  );
+  return new Map(
+    rows.map((r) => [
+      `${r.run_id}|${r.question_id}`,
+      {
+        fails: Number(r.fails ?? 0),
+        warns: Number(r.warns ?? 0),
+        passes: Number(r.passes ?? 0),
+        skipped: Number(r.skipped ?? 0),
+        diagnosedAt: r.diagnosed_at ?? null,
+      },
+    ]),
+  );
+}
+
+/** Every check for one forecast, worst first (fail → warn → info → pass → skipped). */
+export async function getDiagnostics(db: Supabase, runId: string, questionId: string): Promise<DiagnosticCheck[]> {
+  const { rows } = await optional(
+    db.select<Row>("run_diagnostics", {
+      select: "check_id,category,title,status,detail,value,evidence,method,diagnosed_at",
+      run_id: `eq.${runId}`,
+      question_id: `eq.${questionId}`,
+      limit: "500",
+    }),
+    { rows: [] as Row[], count: null },
+  );
+  const rank = (status: string) => {
+    const i = (DIAGNOSTIC_STATUSES as readonly string[]).indexOf(status);
+    return i < 0 ? 2 : i; // an unknown status sorts with "info"
+  };
+  return rows
+    .map((r) => ({
+      checkId: String(r.check_id),
+      category: r.category ?? String(r.check_id).split(".")[0] ?? "other",
+      title: r.title ?? String(r.check_id),
+      status: r.status ?? "info",
+      detail: r.detail ?? "",
+      value: r.value ?? null,
+      evidence: Array.isArray(r.evidence) ? r.evidence.map(String) : [],
+      method: r.method ?? "code",
+      diagnosedAt: r.diagnosed_at ?? null,
+    }))
+    .sort((a, b) => rank(a.status) - rank(b.status) || a.category.localeCompare(b.category) || a.checkId.localeCompare(b.checkId));
+}
+
 export async function listLibrary(db: Supabase): Promise<LibraryItem[]> {
-  const [library, finals] = await Promise.all([
+  const [library, finals, diagnostics] = await Promise.all([
     db.select<Row>("forecast_library", {
       select:
         "run_id,question_id,post_id,title,question_type,run_at,workflow,submitted,abstained," +
@@ -123,6 +199,7 @@ export async function listLibrary(db: Supabase): Promise<LibraryItem[]> {
         "tournaments:raw->tournaments,cli_tournaments:raw->provenance->cli->tournaments",
       limit: "500",
     }),
+    listDiagnosticSummaries(db),
   ]);
 
   const byKey = new Map(finals.rows.map((r) => [`${r.run_id}|${r.question_id}`, r]));
@@ -146,6 +223,7 @@ export async function listLibrary(db: Supabase): Promise<LibraryItem[]> {
       resolution: r.resolution ?? null,
       metric: r.metric ?? null,
       score: r.score ?? null,
+      diagnostics: diagnostics.get(`${r.run_id}|${r.question_id}`) ?? null,
     };
   });
 }
@@ -196,6 +274,7 @@ export async function getForecast(
         typeof e.answer_space_disagreement === "number" &&
           `answer-space disagreement ${e.answer_space_disagreement.toFixed(2)}`,
       ].filter(Boolean) as string[],
+      error: typeof e.error === "string" && e.error.trim() ? e.error.trim() : null,
       value: runValue(type, value),
     };
   });
@@ -253,6 +332,9 @@ export async function getForecast(
     curves,
     spread: buildSpread(type, used, curves),
     runs,
+    tiebreakerUsed: !!raw.extra?.tiebreaker_used,
+    postedComment: typeof raw.posted_comment === "string" && raw.posted_comment.trim() ? raw.posted_comment : null,
+    qwenOutage: typeof raw.qwen_outage === "string" && raw.qwen_outage.trim() ? raw.qwen_outage : null,
     artifactCheck: raw.artifact_check ?? null,
     degradedProviders: raw.degraded_search_providers ?? [],
     timings: raw.timings ?? null,

@@ -1,6 +1,35 @@
 /** Shapes the handler returns and the view renders. Types only — safe on both sides. */
 
-export type FileKey = "research" | "runs" | "audit" | "evolution";
+/** `diagnostics` exists only for forecasts someone ran "Diagnose a forecast" on. */
+export type FileKey = "research" | "runs" | "audit" | "evolution" | "diagnostics";
+
+/** Diagnostics addendum §4. Sort order matches the bot's report: fail → warn → info → pass → skipped. */
+export const DIAGNOSTIC_STATUSES = ["fail", "warn", "info", "pass", "skipped"] as const;
+export type DiagnosticStatus = (typeof DIAGNOSTIC_STATUSES)[number];
+
+/** One row of `run_diagnostics`: one check on one forecast. */
+export type DiagnosticCheck = {
+  checkId: string;
+  category: string;
+  title: string;
+  /** Unknown statuses from a newer bot fall back to "info" when displayed. */
+  status: string;
+  detail: string;
+  value: unknown;
+  evidence: string[];
+  /** `code` (measured) or `qwen` (extracted by Qwen, verified by code) — the latter is less certain. */
+  method: string;
+  diagnosedAt: string | null;
+};
+
+/** One row of the `diagnostics_summary` view. */
+export type DiagnosticsSummary = {
+  fails: number;
+  warns: number;
+  passes: number;
+  skipped: number;
+  diagnosedAt: string | null;
+};
 
 export type Distribution = {
   /** `value` is null when the quantile falls outside the question's bounds; `side` says which. */
@@ -45,6 +74,8 @@ export type LibraryItem = {
   resolution: string | null;
   metric: string | null;
   score: number | null;
+  /** Null when the forecast was never diagnosed, or the diagnostics migration is not applied yet. */
+  diagnostics: DiagnosticsSummary | null;
 };
 
 export type RunEntry = {
@@ -54,6 +85,8 @@ export type RunEntry = {
   repaired: boolean;
   valid: boolean;
   flags: string[];
+  /** Why the run was dropped (`extra.ensemble[].error`), where the bot recorded it. */
+  error: string | null;
   value: ForecastValue | null;
 };
 
@@ -140,6 +173,12 @@ export type ForecastDetail = {
   curves: Curves | null;
   spread: Spread | null;
   runs: RunEntry[];
+  /** Binary only: runs disagreed widely, so a tiebreaker run was submitted instead of the median. */
+  tiebreakerUsed: boolean;
+  /** The short comment actually posted on Metaculus (`raw.posted_comment`); null on older runs. */
+  postedComment: string | null;
+  /** Set when SoCLaaS went down and the forecast ran on degraded research (`raw.qwen_outage`). */
+  qwenOutage: string | null;
   artifactCheck: ArtifactCheck | null;
   degradedProviders: string[];
   timings: { research_seconds?: number; forecast_seconds?: number; total_seconds?: number } | null;

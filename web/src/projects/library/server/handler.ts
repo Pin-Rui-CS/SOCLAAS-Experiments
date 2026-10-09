@@ -1,6 +1,6 @@
 import "server-only";
 import { Supabase, SupabaseError } from "./supabase.ts";
-import { getFile, getForecast, getLive, getTournaments, listLibrary, validKey } from "./library.ts";
+import { getDiagnostics, getFile, getForecast, getLive, getTournaments, listLibrary, validKey } from "./library.ts";
 import type { FileKey } from "../types.ts";
 import { DOWNLOADS, download, listDownloads, type DownloadKey } from "./download.ts";
 import { chat } from "./chat.ts";
@@ -11,7 +11,8 @@ import { chat } from "./chat.ts";
  *
  *   ?view=list
  *   ?view=forecast&run=<run_id>&q=<question_id>
- *   ?view=file&run=…&q=…&file=research|runs|audit|evolution
+ *   ?view=file&run=…&q=…&file=research|runs|audit|evolution|diagnostics
+ *   ?view=diagnostics&run=…&q=…        (run_diagnostics rows, worst first; [] when none)
  *   ?view=live&post=<post_id>
  *   ?view=tournaments&post=<post_id>   (rows that predate raw.tournaments)
  *   ?view=downloads&run=…&q=…           (what can be downloaded, with sizes)
@@ -49,7 +50,7 @@ function db(): Supabase {
 
 class ConfigError extends Error {}
 
-const FILES: FileKey[] = ["research", "runs", "audit", "evolution"];
+const FILES: FileKey[] = ["research", "runs", "audit", "evolution", "diagnostics"];
 
 function json(body: unknown, status = 200) {
   return Response.json(body, { status, headers: { "Cache-Control": "private, no-store" } });
@@ -72,6 +73,13 @@ export async function GET(request: Request) {
         return json({ error: "unknown file" }, 400);
       }
       return await download(db(), run!, q!, file);
+    }
+
+    if (view === "diagnostics") {
+      const run = params.get("run");
+      const q = params.get("q");
+      if (!validKey(run, q)) return json({ error: "bad run or question id" }, 400);
+      return json({ checks: await getDiagnostics(db(), run!, q!) });
     }
 
     if (view === "forecast" || view === "file") {
