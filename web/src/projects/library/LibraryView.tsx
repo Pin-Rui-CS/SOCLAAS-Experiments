@@ -163,6 +163,7 @@ function Detail({
 
   return (
     <div style={{ maxWidth: 1040, margin: "0 auto", padding: "26px 28px 64px" }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>Question ID {item.questionId}</div>
       <h1 style={{ fontSize: 21, fontWeight: 600, letterSpacing: "-0.01em", margin: 0, lineHeight: 1.3 }}>{item.title}</h1>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 8px", marginTop: 8, fontSize: 12.5, color: "var(--text-muted)" }}>
         {[
