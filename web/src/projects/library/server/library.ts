@@ -33,6 +33,7 @@ import type {
   ForecastDetail,
   ForecastValue,
   LibraryItem,
+  LineageRecord,
   LiveQuestion,
   RunEntry,
   Spread,
@@ -182,8 +183,56 @@ export async function getDiagnostics(db: Supabase, runId: string, questionId: st
     .sort((a, b) => rank(a.status) - rank(b.status) || a.category.localeCompare(b.category) || a.checkId.localeCompare(b.checkId));
 }
 
+// --- Run lineage (LINEAGE.md: run_lineage + step files) ----------------------------
+
+/** Which forecasts have a lineage document, without loading the documents. */
+export async function listLineageKeys(db: Supabase): Promise<Set<string>> {
+  const { rows } = await optional(
+    db.select<Row>("run_lineage", { select: "run_id,question_id", limit: "1000" }),
+    { rows: [] as Row[], count: null },
+  );
+  return new Set(rows.map((r) => `${r.run_id}|${r.question_id}`));
+}
+
+export async function getLineage(db: Supabase, runId: string, questionId: string): Promise<LineageRecord | null> {
+  const { rows } = await optional(
+    db.select<Row>("run_lineage", {
+      select: "schema_version,lineage_source,lineage,diagnosed_at",
+      run_id: `eq.${runId}`,
+      question_id: `eq.${questionId}`,
+    }),
+    { rows: [] as Row[], count: null },
+  );
+  const r = rows[0];
+  if (!r?.lineage) return null;
+  return {
+    schemaVersion: Number(r.schema_version ?? r.lineage.schema_version ?? 1),
+    source: r.lineage_source ?? r.lineage.lineage_source ?? "declared",
+    diagnosedAt: r.diagnosed_at ?? null,
+    lineage: r.lineage,
+  };
+}
+
+/** A step file name from the lineage document: one path segment, no traversal. */
+const STEP_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/;
+
+export function validStepFile(file: string | null): boolean {
+  return !!file && STEP_FILE.test(file) && !file.includes("..");
+}
+
+/**
+ * One step's saved input or output: `{prefix}/steps/{file}.gz`, gunzipped.
+ * The prefix is the forecast's blob prefix (`runs/<run>/<question>`, handoff §4),
+ * which is what `run.files_prefix` holds — derived here from the validated ids
+ * rather than taken from the document. Null when the file was not saved.
+ */
+export async function getStepFile(db: Supabase, runId: string, questionId: string, file: string): Promise<string | null> {
+  const bytes = await db.download(`runs/${runId}/${questionId}/steps/${file}.gz`);
+  return bytes ? await gunzip(bytes) : null;
+}
+
 export async function listLibrary(db: Supabase): Promise<LibraryItem[]> {
-  const [library, finals, diagnostics] = await Promise.all([
+  const [library, finals, diagnostics, lineageKeys] = await Promise.all([
     db.select<Row>("forecast_library", {
       select:
         "run_id,question_id,post_id,title,question_type,run_at,workflow,submitted,abstained," +
@@ -200,6 +249,7 @@ export async function listLibrary(db: Supabase): Promise<LibraryItem[]> {
       limit: "500",
     }),
     listDiagnosticSummaries(db),
+    listLineageKeys(db),
   ]);
 
   const byKey = new Map(finals.rows.map((r) => [`${r.run_id}|${r.question_id}`, r]));
@@ -224,6 +274,7 @@ export async function listLibrary(db: Supabase): Promise<LibraryItem[]> {
       metric: r.metric ?? null,
       score: r.score ?? null,
       diagnostics: diagnostics.get(`${r.run_id}|${r.question_id}`) ?? null,
+      hasLineage: lineageKeys.has(`${r.run_id}|${r.question_id}`),
     };
   });
 }

@@ -162,7 +162,8 @@ function Detail({
   const link = { color: "var(--accent)" } as const;
 
   return (
-    <div style={{ maxWidth: 1040, margin: "0 auto", padding: "26px 28px 64px" }}>
+    // The run trace's map and call table are wide by nature; every other tab reads best at 1040px.
+    <div style={{ maxWidth: tab === "trace" && item.hasLineage ? "none" : 1040, margin: "0 auto", padding: "26px 28px 64px" }}>
       <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>Question ID {item.questionId}</div>
       <h1 style={{ fontSize: 21, fontWeight: 600, letterSpacing: "-0.01em", margin: 0, lineHeight: 1.3 }}>{item.title}</h1>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 8px", marginTop: 8, fontSize: 12.5, color: "var(--text-muted)" }}>
@@ -217,7 +218,7 @@ function Detail({
       {detail && (
         <>
           <Glance detail={detail} unit={unit} />
-          <DetailTabs detail={detail} unit={unit} tab={tab} onTab={onTab} diagnostics={item.diagnostics} />
+          <DetailTabs detail={detail} unit={unit} tab={tab} onTab={onTab} diagnostics={item.diagnostics} hasLineage={item.hasLineage} />
         </>
       )}
     </div>

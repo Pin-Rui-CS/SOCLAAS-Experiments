@@ -7,6 +7,7 @@ import { Markdown } from "./Markdown";
 import { SeriesTable, runColor } from "./DistributionCharts";
 import { downloadHref } from "./DownloadMenu";
 import { DiagnosticsPanel } from "./Diagnostics";
+import { TracePanel } from "./trace/TracePanel";
 import { ValueView, formatDate, formatNumber, pct } from "./Value";
 import {
   Collapsible,
@@ -25,12 +26,13 @@ import {
 /** Prose reads best at ~75 characters a line; tables keep the full width. */
 const prose = { maxWidth: "78ch" } as const;
 
-export type TabKey = "models" | "evidence" | "diagnostics" | "question" | "cost" | "files";
+export type TabKey = "models" | "evidence" | "diagnostics" | "trace" | "question" | "cost" | "files";
 
 export const ALL_TABS: { key: TabKey; label: string }[] = [
   { key: "models", label: "Models" },
   { key: "evidence", label: "Evidence" },
   { key: "diagnostics", label: "Diagnostics" },
+  { key: "trace", label: "Run trace" },
   { key: "question", label: "Question" },
   { key: "cost", label: "Cost" },
   { key: "files", label: "Files" },
@@ -47,6 +49,7 @@ export function DetailTabs({
   tab: chosen,
   onTab,
   diagnostics,
+  hasLineage,
 }: {
   detail: ForecastDetail;
   unit: string;
@@ -54,9 +57,11 @@ export function DetailTabs({
   onTab: (tab: TabKey) => void;
   /** From diagnostics_summary; the Diagnostics tab exists only when this is set. */
   diagnostics: DiagnosticsSummary | null;
+  /** A run_lineage row exists; the Run trace tab exists only then. */
+  hasLineage: boolean;
 }) {
   const refs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const TABS = ALL_TABS.filter((t) => t.key !== "diagnostics" || diagnostics);
+  const TABS = ALL_TABS.filter((t) => (t.key !== "diagnostics" || diagnostics) && (t.key !== "trace" || hasLineage));
   // A remembered tab this forecast does not have (Diagnostics) falls back to Models.
   const tab: TabKey = TABS.some((t) => t.key === chosen) ? chosen : "models";
 
@@ -134,6 +139,7 @@ export function DetailTabs({
         {tab === "models" && <ModelsPanel detail={d} unit={unit} />}
         {tab === "evidence" && <EvidencePanel detail={d} />}
         {tab === "diagnostics" && <DiagnosticsPanel runId={d.runId} questionId={d.questionId} summary={diagnostics} />}
+        {tab === "trace" && <TracePanel runId={d.runId} questionId={d.questionId} />}
         {tab === "question" && <QuestionPanel detail={d} unit={unit} />}
         {tab === "cost" && <CostPanel detail={d} />}
         {tab === "files" && <FilesPanel runId={d.runId} questionId={d.questionId} />}

@@ -1,6 +1,6 @@
 import "server-only";
 import { Supabase, SupabaseError } from "./supabase.ts";
-import { getDiagnostics, getFile, getForecast, getLive, getTournaments, listLibrary, validKey } from "./library.ts";
+import { getDiagnostics, getFile, getForecast, getLineage, getLive, getStepFile, getTournaments, listLibrary, validKey, validStepFile } from "./library.ts";
 import type { FileKey } from "../types.ts";
 import { DOWNLOADS, download, listDownloads, type DownloadKey } from "./download.ts";
 import { chat } from "./chat.ts";
@@ -13,6 +13,8 @@ import { chat } from "./chat.ts";
  *   ?view=forecast&run=<run_id>&q=<question_id>
  *   ?view=file&run=…&q=…&file=research|runs|audit|evolution|diagnostics
  *   ?view=diagnostics&run=…&q=…        (run_diagnostics rows, worst first; [] when none)
+ *   ?view=lineage&run=…&q=…            (the run_lineage document, or null)
+ *   ?view=step&run=…&q=…&file=<name>   (one step's saved input or output, gunzipped; null if not saved)
  *   ?view=live&post=<post_id>
  *   ?view=tournaments&post=<post_id>   (rows that predate raw.tournaments)
  *   ?view=downloads&run=…&q=…           (what can be downloaded, with sizes)
@@ -75,11 +77,15 @@ export async function GET(request: Request) {
       return await download(db(), run!, q!, file);
     }
 
-    if (view === "diagnostics") {
+    if (view === "diagnostics" || view === "lineage" || view === "step") {
       const run = params.get("run");
       const q = params.get("q");
       if (!validKey(run, q)) return json({ error: "bad run or question id" }, 400);
-      return json({ checks: await getDiagnostics(db(), run!, q!) });
+      if (view === "diagnostics") return json({ checks: await getDiagnostics(db(), run!, q!) });
+      if (view === "lineage") return json({ record: await getLineage(db(), run!, q!) });
+      const file = params.get("file");
+      if (!validStepFile(file)) return json({ error: "bad step file name" }, 400);
+      return json({ text: await getStepFile(db(), run!, q!, file!) });
     }
 
     if (view === "forecast" || view === "file") {

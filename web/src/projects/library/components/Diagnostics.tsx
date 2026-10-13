@@ -85,7 +85,7 @@ export function DiagnosticsBadge({ summary }: { summary: DiagnosticsSummary }) {
   );
 }
 
-const CATEGORY_ORDER = ["pipeline", "sources", "condensation", "evidence", "forecast", "error", "qwen"];
+const CATEGORY_ORDER = ["pipeline", "sources", "condensation", "evidence", "forecast", "lineage", "error", "qwen"];
 const CATEGORY_LABELS: Record<string, string> = {
   pipeline: "Pipeline",
   sources: "Sources",
@@ -94,6 +94,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   forecast: "Forecast",
   error: "Checks that crashed",
   qwen: "AI-assisted checks",
+  lineage: "Lineage",
 };
 
 export function DiagnosticsPanel({

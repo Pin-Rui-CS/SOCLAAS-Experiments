@@ -76,6 +76,8 @@ export type LibraryItem = {
   score: number | null;
   /** Null when the forecast was never diagnosed, or the diagnostics migration is not applied yet. */
   diagnostics: DiagnosticsSummary | null;
+  /** A run_lineage row exists, so the Run trace tab can be shown. */
+  hasLineage: boolean;
 };
 
 export type RunEntry = {
@@ -203,4 +205,105 @@ export type LiveQuestion = {
   community: ForecastValue | null;
   fetchedAt: string;
   cached: boolean;
+};
+
+/* ---------------------------------------------------------------- lineage
+ * Run trace (bot repo diagnostics/LINEAGE.md, lineage.schema.json v1).
+ * Field names are kept as the bot writes them. New optional fields and new
+ * values for kind, stage, pass, status_raw and lane names can appear at any
+ * time, so every string-valued field here is open, never a closed union.
+ */
+
+export type LineageCut = { ref?: string; kept: number | null; of?: number | null; reason: string };
+
+export type LineageNode = {
+  id: string;
+  seq?: number | null;
+  stage: string;
+  label: string | null;
+  /** input | search | fetch | model | code | note — new values may appear. */
+  kind: string;
+  /** A lane name, "*" for a step spanning every column, null only for input nodes. */
+  lane: string | null;
+  pass?: string | null;
+  layer: number;
+  group: string;
+  /** pass | warn | fail | unused */
+  status: string;
+  status_raw?: string;
+  error?: string;
+  ts?: string | null;
+  duration_s?: number | null;
+  model?: string | null;
+  cuts: LineageCut[];
+  note?: string;
+  output: { file: string | null; chars: number } | null;
+  input: { file?: string | null; chars?: number | null; from?: string[] } | null;
+  parents: string[];
+  children: string[];
+  call_ids: string[];
+  dead_end: boolean;
+  gaps: string[];
+  inferred: boolean;
+};
+
+export type LineageEdge = { from: string; to: string; chars?: number | null; cut: boolean; inferred: boolean; ref_count?: number };
+
+export type LineageCall = {
+  id: string;
+  node_id: string | null;
+  service: string | null;
+  /** http | search | scrape | data | model — new values may appear. */
+  kind: string;
+  request: string | null;
+  status_code?: number | null;
+  started_at?: string | null;
+  duration_s?: number | null;
+  returned?: string | number | null;
+  outcome?: string | null;
+  failed: boolean;
+  retry_of: string | null;
+};
+
+export type FactState = "present" | "modified" | "dropped" | "gone" | "never_fetched" | "unknown";
+
+export type LineageFact = {
+  id: string;
+  claim: string;
+  source?: string;
+  numbers?: string[];
+  plan_item: boolean;
+  origin?: string | null;
+  steps: { node_id: string | null; state: FactState | string; note?: string; quote?: string | null }[];
+  lost_at: string | null;
+  final_state: FactState | string;
+};
+
+export type LineageDoc = {
+  schema_version: number;
+  lineage_source: string;
+  run: {
+    question_id: number | null;
+    title?: string | null;
+    run_id: string | null;
+    run_timestamp?: string | null;
+    timings?: Record<string, number | null>;
+    files_prefix?: string | null;
+    layers: number;
+  };
+  lanes: string[];
+  nodes: LineageNode[];
+  edges: LineageEdge[];
+  calls: LineageCall[];
+  facts: LineageFact[];
+  losses: Record<string, Record<string, number>>;
+};
+
+/** One row of run_lineage. */
+export type LineageRecord = {
+  schemaVersion: number;
+  /** "declared", or "legacy-translation" when the links were reconstructed (spec §8). */
+  source: string;
+  diagnosedAt: string | null;
+  lineage: LineageDoc;
 };

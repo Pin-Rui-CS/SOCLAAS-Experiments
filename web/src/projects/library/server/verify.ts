@@ -664,6 +664,40 @@ await check("diag", "run_diagnostics / diagnostics_summary are readable", async 
   }
 });
 
+// Lineage (bot repo diagnostics/LINEAGE.md). The reader relies on two invariants: every edge
+// points to a deeper layer (§4), and every id it follows (parents, children, edges, calls,
+// fact steps) names a node in the same document.
+await check("lineage", "run_lineage documents are readable and consistent", async () => {
+  let rows: Row[];
+  try {
+    ({ rows } = await db.select<Row>("run_lineage", { select: "run_id,question_id,lineage_source,lineage", limit: "200" }));
+  } catch (error) {
+    if (error instanceof SupabaseError && (error.status === 404 || /PGRST205/.test(error.body))) {
+      return ["INFO", "not created yet — apply db/migrations/004_run_lineage.sql in the bot repo"];
+    }
+    throw error;
+  }
+  if (!rows.length) return ["INFO", "table exists, no lineage published yet"];
+  const problems: string[] = [];
+  for (const r of rows) {
+    const L = r.lineage ?? {};
+    const nodes = new Map<string, Row>((L.nodes ?? []).map((n: Row) => [n.id, n]));
+    const where = `${r.question_id}`;
+    for (const e of L.edges ?? []) {
+      const a = nodes.get(e.from), b = nodes.get(e.to);
+      if (!a || !b) problems.push(`${where}: edge ${e.from}→${e.to} names a missing node`);
+      else if (!(a.layer < b.layer)) problems.push(`${where}: edge ${e.from}→${e.to} does not point down (${a.layer}→${b.layer})`);
+    }
+    for (const n of nodes.values()) for (const id of [...(n.parents ?? []), ...(n.children ?? [])]) if (!nodes.has(id)) problems.push(`${where}: ${n.id} links to missing ${id}`);
+    for (const c of L.calls ?? []) if (c.node_id && !nodes.has(c.node_id)) problems.push(`${where}: call ${c.id} names missing node ${c.node_id}`);
+    for (const f of L.facts ?? []) for (const s of f.steps ?? []) if (s.node_id && !nodes.has(s.node_id)) problems.push(`${where}: fact ${f.id} names missing node ${s.node_id}`);
+  }
+  const sources = [...new Set(rows.map((r) => r.lineage_source))].join(", ");
+  return problems.length
+    ? ["FAIL", `${problems.length} problems, e.g.\n${problems.slice(0, 5).join("\n")}`]
+    : ["PASS", `${rows.length} documents (${sources})`];
+});
+
 await check("§7", "question 45809 is still missing (open item)", async () => {
   const rows = forecasts.filter((f) => f.question_id === 45809);
   return rows.length
