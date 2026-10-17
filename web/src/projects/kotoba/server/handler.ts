@@ -142,9 +142,18 @@ function toQuestion(raw: unknown, word: GenerateWord): Question | null {
   const parsed = questionItem.safeParse(raw);
   if (!parsed.success || parsed.data.id !== word.id) return null;
   const q = parsed.data;
-  const answer = q.answer.trim();
+  let answer = q.answer.trim();
   const before = q.before.trim();
-  const after = q.after.trim();
+  let after = q.after.trim();
+  /*
+   * A word ending in kanji or katakana (a noun, a na-adjective) never inflects,
+   * so anything the model attached is a particle or copula that belongs to the
+   * sentence: 本を → 本 + を. Seen despite the prompt forbidding it.
+   */
+  if (!/[぀-ゟ]$/u.test(word.word) && answer !== word.word && answer.startsWith(word.word)) {
+    after = answer.slice(word.word.length) + after;
+    answer = word.word;
+  }
   if (!answer || (before + after).length < 4) return null;
   return {
     before,

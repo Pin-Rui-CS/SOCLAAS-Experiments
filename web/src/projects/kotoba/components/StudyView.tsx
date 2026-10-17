@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toKana } from "wanakana";
 import { generateQuestions } from "../api";
 import { judge, type Verdict } from "../check";
 import type { Actions } from "../KotobaView";
@@ -115,7 +116,10 @@ export function StudyView({
   }, [deck.defaultHint]);
 
   const check = useCallback(() => {
-    if (question) setSide("answer");
+    if (!question) return;
+    // IME mode holds a trailing "n" back (ほn) in case "na" follows; settle it.
+    setTyped((t) => toKana(t));
+    setSide("answer");
   }, [question]);
 
   const grade = useCallback(
@@ -318,7 +322,15 @@ export function StudyView({
                   autoCorrect="off"
                   spellCheck={false}
                   value={typed}
-                  onChange={(e) => setTyped(e.target.value)}
+                  // Romaji becomes kana as you type, so no system IME is needed.
+                  // Skipped mid-composition: a real IME owns the text until it commits.
+                  onChange={(e) =>
+                    setTyped(
+                      (e.nativeEvent as InputEvent).isComposing
+                        ? e.target.value
+                        : toKana(e.target.value, { IMEMode: true }),
+                    )
+                  }
                   onKeyDown={(e) => {
                     // Enter that confirms an IME conversion must not submit the answer.
                     if (e.key === "Enter" && e.nativeEvent.isComposing) e.preventDefault();
@@ -450,7 +462,8 @@ function HintToggle({ label, shortcut, on, onClick }: { label: string; shortcut:
 function VerdictLine({ verdict, typed, question }: { verdict: Verdict; typed: string; question: Question }) {
   const expected = (
     <span lang="ja" style={{ color: "var(--text-muted)", fontFamily: JP_FONT }}>
-      expected {question.answer}（{question.reading}）
+      expected {question.answer}
+      {question.reading !== question.answer && <>（{question.reading}）</>}
     </span>
   );
 
