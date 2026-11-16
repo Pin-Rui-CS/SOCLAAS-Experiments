@@ -35,6 +35,7 @@ import type {
   LibraryItem,
   LineageRecord,
   LiveQuestion,
+  LlmCall,
   RunEntry,
   Spread,
 } from "../types.ts";
@@ -288,7 +289,10 @@ export async function getForecast(
   const [forecast, calls, outcome] = await Promise.all([
     db.select<Row>("forecasts", { select: "*", ...key }),
     db.select<Row>("llm_calls", {
-      select: "model,cost_source,cost_usd,quota_microdollars,native_input_tokens,native_output_tokens,duration_seconds",
+      select:
+        "call_no,task,endpoint,model,cost_source,cost_usd,quota_microdollars," +
+        "input_tokens,output_tokens,native_input_tokens,native_output_tokens,reasoning_tokens,duration_seconds",
+      order: "call_no.asc",
       ...key,
       limit: "2000",
     }),
@@ -305,20 +309,64 @@ export async function getForecast(
   const type: string = row.question_type ?? raw.question_type ?? "unknown";
   const range: number[] | null = qd.scaling?.continuous_range ?? null;
 
+  const rawCalls: Row[] = calls.rows.length ? calls.rows : Array.isArray(raw.llm_calls) ? raw.llm_calls : [];
+  const llmCalls: LlmCall[] = rawCalls.map((c, idx) => ({
+    callNo: Number(c.call_no ?? idx + 1),
+    task: String(c.task ?? "llm"),
+    endpoint: typeof c.endpoint === "string" && c.endpoint ? c.endpoint : null,
+    model: String(c.model ?? "?"),
+    source: String(c.cost_source ?? "?"),
+    usd: Number(c.cost_usd ?? 0),
+    quotaMicro: Number(c.quota_microdollars ?? 0),
+    inputTokens: Number(c.native_input_tokens ?? c.input_tokens ?? 0),
+    outputTokens: Number(c.native_output_tokens ?? c.output_tokens ?? 0),
+    reasoningTokens: Number(c.reasoning_tokens ?? 0),
+    seconds: c.duration_seconds == null ? null : Number(c.duration_seconds),
+  }));
+
+  // Detect raw-research forecaster calls when task labels say so (e.g. raw-forecast[...]).
+  const rawForecastModels = new Set(
+    llmCalls
+      .filter((c) => /raw[-_ ]?(?:forecast|research|view)/i.test(c.task))
+      .map((c) => c.model),
+  );
+
   // Zip the non-dropped ensemble entries with run_values; dropped ones get no value.
+  const ensemble: Row[] = raw.extra?.ensemble ?? [];
   const values: unknown[] = raw.run_values ?? [];
   const used: { index: number; model: string; value: Row }[] = [];
   let next = 0;
-  const runs: RunEntry[] = (raw.extra?.ensemble ?? []).map((e: Row, i: number) => {
+  const runs: RunEntry[] = ensemble.map((e: Row, i: number) => {
     const dropped = !!e.dropped;
+    const shadow = !!(e.shadow || e.is_shadow || e.role === "shadow");
     const value = dropped ? null : values[next++];
-    if (!dropped && value) used.push({ index: i + 1, model: e.model ?? "unknown", value: value as Row });
+    const model = String(e.model ?? "unknown");
+    if (!dropped && value) used.push({ index: i + 1, model, value: value as Row });
+    const explicitRaw = Boolean(
+      e.raw_research ||
+        e.raw_view ||
+        e.heterogeneous ||
+        e.view === "raw" ||
+        e.context === "raw" ||
+        /raw/i.test(String(e.role ?? e.input ?? "")),
+    );
+    // In heterogeneous ensemble runs, the final slot on SoCLaaS receives raw uncompiled research.
+    const inferredRaw =
+      !explicitRaw &&
+      (rawForecastModels.has(model) ||
+        (ensemble.length >= 3 &&
+          i === ensemble.length - 1 &&
+          /qwen|deepseek|glm|minimax|soclaas|ollama/i.test(model) &&
+          !ensemble.slice(0, -1).every((prev) => prev?.model === model)));
     return {
       index: i + 1,
-      model: e.model ?? "unknown",
+      model,
       dropped,
       repaired: !!e.repaired,
       valid: e.valid !== false,
+      shadow,
+      rawResearch: explicitRaw || inferredRaw,
+      weight: typeof e.weight === "number" ? e.weight : null,
       flags: [
         e.used_fallback && "used fallback",
         e.self_contradictory && "self-contradictory",
@@ -332,11 +380,11 @@ export async function getForecast(
 
   // §5.2: two currencies. Real dollars and quota are summed separately, never added.
   const cost = new Map<string, CostLine>();
-  for (const c of calls.rows) {
-    const k = `${c.model ?? "?"}|${c.cost_source ?? "?"}`;
+  for (const c of llmCalls) {
+    const k = `${c.model}|${c.source}`;
     const line = cost.get(k) ?? {
-      model: c.model ?? "?",
-      source: c.cost_source ?? "?",
+      model: c.model,
+      source: c.source,
       calls: 0,
       usd: 0,
       quotaMicro: 0,
@@ -345,11 +393,11 @@ export async function getForecast(
       seconds: 0,
     };
     line.calls++;
-    line.usd += Number(c.cost_usd ?? 0);
-    line.quotaMicro += Number(c.quota_microdollars ?? 0);
-    line.inputTokens += Number(c.native_input_tokens ?? 0);
-    line.outputTokens += Number(c.native_output_tokens ?? 0);
-    line.seconds += Number(c.duration_seconds ?? 0);
+    line.usd += c.usd;
+    line.quotaMicro += c.quotaMicro;
+    line.inputTokens += c.inputTokens;
+    line.outputTokens += c.outputTokens;
+    line.seconds += c.seconds ?? 0;
     cost.set(k, line);
   }
 
@@ -387,9 +435,19 @@ export async function getForecast(
     postedComment: typeof raw.posted_comment === "string" && raw.posted_comment.trim() ? raw.posted_comment : null,
     qwenOutage: typeof raw.qwen_outage === "string" && raw.qwen_outage.trim() ? raw.qwen_outage : null,
     artifactCheck: raw.artifact_check ?? null,
+    artifactCheckV1: raw.artifact_check_v1 ?? raw.extra?.artifact_check_v1 ?? null,
+    extremised:
+      typeof raw.extra?.extremized === "boolean"
+        ? raw.extra.extremized
+        : typeof raw.extra?.extremised === "boolean"
+          ? raw.extra.extremised
+          : typeof raw.extra?.extremising_factor === "number"
+            ? true
+            : null,
     degradedProviders: raw.degraded_search_providers ?? [],
     timings: raw.timings ?? null,
     cost: [...cost.values()].sort((a, b) => b.usd - a.usd || b.quotaMicro - a.quotaMicro),
+    llmCalls,
     outcome: {
       status: o.outcome_status ?? null,
       resolution: o.resolution ?? null,

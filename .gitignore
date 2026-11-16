@@ -21,3 +21,5 @@ next-env.d.ts
 # output
 results/
 *.out.json
+
+Metaculus Pipeline.excalidraw

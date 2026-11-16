@@ -86,10 +86,29 @@ export type RunEntry = {
   dropped: boolean;
   repaired: boolean;
   valid: boolean;
+  shadow: boolean;
+  rawResearch: boolean;
+  weight: number | null;
   flags: string[];
   /** Why the run was dropped (`extra.ensemble[].error`), where the bot recorded it. */
   error: string | null;
   value: ForecastValue | null;
+};
+
+export type LlmCall = {
+  callNo: number;
+  task: string;
+  endpoint: string | null;
+  model: string;
+  /** native | price_table | quota — see handoff §5.2 */
+  source: string;
+  usd: number;
+  /** Quota allowance, NOT dollars. Never add to `usd`. */
+  quotaMicro: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  seconds: number | null;
 };
 
 export type CostLine = {
@@ -182,9 +201,12 @@ export type ForecastDetail = {
   /** Set when SoCLaaS went down and the forecast ran on degraded research (`raw.qwen_outage`). */
   qwenOutage: string | null;
   artifactCheck: ArtifactCheck | null;
+  artifactCheckV1: ArtifactCheck | null;
+  extremised: boolean | null;
   degradedProviders: string[];
   timings: { research_seconds?: number; forecast_seconds?: number; total_seconds?: number } | null;
   cost: CostLine[];
+  llmCalls: LlmCall[];
   outcome: {
     status: string | null;
     resolution: string | null;
