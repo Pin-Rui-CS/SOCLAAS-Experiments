@@ -64,6 +64,22 @@ streams into a collapsible panel and is deliberately excluded from
 
 ## Deploying
 
+API Agent includes the updated `apiagent-kit/` core: 28 data sources, including
+Treasury fiscal data, hurricane history, tropical outlooks (with CPC weeks 2–3
+hazards), and ENSO conditions. Its streaming UI still uses the SoCLaaS gateway;
+the standalone kit's `LLM_*` variables are not needed by the website.
+
+The four added sources require no keys. `FRED_API_KEY` enables FRED;
+`METACULUS_API_TOKEN` enables Metaculus, with the library's `METACULUS_TOKEN`
+accepted as a fallback. `GITHUB_TOKEN` and `SEC_EDGAR_CONTACT` are optional.
+Configure these server-side in Vercel as well as in your local `.env`.
+
+Run `npm run test:apiagent` from `web/` (or `npm run test:apiagent:unit` from
+the repository root) for offline parser, HTTP, credential and matcher regression
+tests. The root `npm run test:apiagent` remains the live API smoke test.
+The web copy lives in `src/projects/apiagent/server/`; its core matches the
+top-level kit except for the website's shared Metaculus token fallback.
+
 Vercel project with **Root Directory = `web`**. Set the four environment
 variables in project settings. `vercel.json` pins the function region to
 Singapore, co-located with the NUS gateway.

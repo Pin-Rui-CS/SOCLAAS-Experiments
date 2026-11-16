@@ -13,11 +13,21 @@
  *    characters of what actually arrived, so the tool layer can hand the model
  *    a real explanation instead of an empty result set.
  *
- * NOTE ON IMPORTS: everything reachable from `smoke.ts` uses explicit `.ts`
- * extensions and no `@/` aliases, so the smoke test runs under plain Node with
- * no TypeScript runner installed. Keep that property — it is the only way to
- * verify the registry's endpoints without spending gateway quota.
+ * NOTE ON IMPORTS: every file in this package uses explicit `.ts` extensions
+ * and no path aliases, so the whole thing runs under plain Node with no
+ * TypeScript runner installed. Keep that property — it is what makes this a
+ * drop-in folder rather than something that needs a build step.
+ *
+ * NOTE ON SYNTAX: keep this subtree pure-erasure TypeScript — no enums, no
+ * constructor parameter properties, no namespaces, no decorators. Node's
+ * type-stripping mode rejects anything that is not erasable, and that mode is
+ * the whole reason there is no build step.
  */
+
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
 /**
  * Per-request ceiling. The gateway allows 300s for the WHOLE turn, and a turn
@@ -55,8 +65,11 @@ export const MAX_ROWS = 25;
 /**
  * Response body bytes read before giving up. Guards against an endpoint that
  * decides to stream a few hundred megabytes at us — CISA KEV is already ~2 MB.
+ * A whole-file adapter whose source is larger (HURDAT2 is ~7 MB) passes its own
+ * `maxBytes`. Over the cap is an ERROR, never a silently cut body: a truncated
+ * data file parses into wrong numbers that look right.
  */
-const MAX_BODY_BYTES = 8 * 1024 * 1024;
+export const MAX_BODY_BYTES = 8 * 1024 * 1024;
 
 /**
  * The response arrived, but it is not what this endpoint is documented to
@@ -156,9 +169,15 @@ export function assertShape(
  *
  * Keep the `+url` form. It is what bot-management systems recognise as a
  * declared crawler, and it is the difference between working and not.
+ *
+ * Both halves are configurable so this package can identify itself as YOUR
+ * project rather than the one it was extracted from. Change them via
+ * `APIAGENT_UA_PRODUCT` and `APIAGENT_UA_URL`, and keep the shapes:
+ * `Name/version` and a real https URL that describes the crawler. A blank or
+ * jokey value re-creates the tarpit described above.
  */
-const PRODUCT = "SoCLaaS-Experiments/1.0";
-const SITE = "https://soclaas-experiments.vercel.app";
+const PRODUCT = process.env.APIAGENT_UA_PRODUCT?.trim() || "SoCLaaS-Experiments/1.0";
+const SITE = process.env.APIAGENT_UA_URL?.trim() || "https://soclaas-experiments.vercel.app";
 
 export function userAgent(): string {
   const contact = process.env.SEC_EDGAR_CONTACT?.trim();
@@ -178,6 +197,8 @@ type RequestOptions = {
    * unexplained timeout.
    */
   timeoutMs?: number;
+  /** Body-size ceiling for endpoints measured to need more than MAX_BODY_BYTES. */
+  maxBytes?: number;
 };
 
 /**
@@ -231,12 +252,27 @@ export function spaced<T>(
   return started;
 }
 
-async function readCapped(response: Response): Promise<string> {
-  const buffer = await response.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  const slice =
-    bytes.length > MAX_BODY_BYTES ? bytes.subarray(0, MAX_BODY_BYTES) : bytes;
-  return new TextDecoder("utf-8").decode(slice);
+export class TooLargeError extends ShapeError {}
+
+export async function readCapped(
+  response: Response,
+  options: { context: string; maxBytes?: number },
+): Promise<string> {
+  const max = options.maxBytes ?? MAX_BODY_BYTES;
+  const tooLarge = (size: number) =>
+    new TooLargeError(
+      options.context,
+      `a response of at most ${(max / 1024 / 1024).toFixed(1)} MiB`,
+      `${size.toLocaleString("en-US")} bytes — this adapter needs a higher maxBytes`,
+    );
+  const declared = Number(response.headers.get("content-length") ?? 0);
+  if (declared > max) {
+    await response.body?.cancel();
+    throw tooLarge(declared);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.length > max) throw tooLarge(bytes.length);
+  return new TextDecoder("utf-8").decode(bytes);
 }
 
 /**
@@ -250,9 +286,55 @@ export async function getText(url: string, options: RequestOptions): Promise<str
     redirect: "follow",
   });
 
-  const body = await readCapped(response);
+  const body = await readCapped(response, options);
   if (!response.ok) throw new HttpError(response.status, url, preview(body));
   return body;
+}
+
+/**
+ * `getText` with a disk cache shared across processes.
+ *
+ * The bot starts a fresh Node process for every agent step, so the in-memory
+ * caches some adapters keep last one step. Large, slow-changing files
+ * (HURDAT2, the ONI table) are kept in the OS temp directory for `maxAgeMs`;
+ * within one process, concurrent calls for the same URL share one download.
+ * Cache trouble (read-only disk, a corrupt entry) just means a fresh download.
+ */
+const inflight = new Map<string, Promise<string>>();
+
+export function getTextCached(
+  url: string,
+  options: RequestOptions & { maxAgeMs: number },
+): Promise<string> {
+  const pending = inflight.get(url);
+  if (pending) return pending;
+  const work = (async () => {
+    const file = cacheFile(url);
+    try {
+      const stat = statSync(file);
+      if (Date.now() - stat.mtimeMs < options.maxAgeMs) return readFileSync(file, "utf8");
+    } catch {
+      // no usable cache entry
+    }
+    const body = await getText(url, options);
+    try {
+      mkdirSync(dirname(file), { recursive: true });
+      const temp = `${file}.${process.pid}.tmp`;
+      writeFileSync(temp, body, "utf8");
+      renameSync(temp, file);
+    } catch {
+      // caching is an optimisation, never a failure
+    }
+    return body;
+  })();
+  inflight.set(url, work);
+  work.finally(() => inflight.delete(url)).catch(() => {});
+  return work;
+}
+
+function cacheFile(url: string): string {
+  const dir = process.env.APIAGENT_CACHE_DIR || join(tmpdir(), "apiagent-kit-cache");
+  return join(dir, `${createHash("sha1").update(url).digest("hex")}.txt`);
 }
 
 /**
@@ -371,6 +453,25 @@ export function csvToObjects(text: string): Array<Record<string, string>> {
  * ISO instant for the provenance log. Every result carries one — the Tier C
  * policy in §3 requires the retrieval URL AND timestamp, not just the URL.
  */
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", deg: "°", ntilde: "ñ",
+  Ntilde: "Ñ", eacute: "é", aacute: "á", iacute: "í", oacute: "ó", uacute: "ú",
+  ndash: "–", mdash: "—", rsquo: "’", lsquo: "‘", rdquo: "”", ldquo: "“", percnt: "%",
+};
+
+/** Visible text of an HTML page: scripts and tags dropped, entities decoded, spaces collapsed. */
+export function htmlToText(html: string): string {
+  return html
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)))
+    .replace(/&([a-z]+);/gi, (match, name) => NAMED_ENTITIES[name] ?? match)
+    .replace(/\uFEFF/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function now(): string {
   return new Date().toISOString();
 }

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:apiagent": "node --test \"test/apiagent/*.test.ts\""
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.41",

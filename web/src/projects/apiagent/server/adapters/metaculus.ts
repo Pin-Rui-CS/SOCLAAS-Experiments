@@ -2,6 +2,11 @@ import { z } from "zod";
 import { defineAdapter } from "../types.ts";
 import { capRows, getJson, isObject, now, truncate } from "../http.ts";
 
+// Reuse the forecast library's token when no API Agent override is configured.
+function metaculusToken(): string | undefined {
+  return process.env.METACULUS_API_TOKEN?.trim() || process.env.METACULUS_TOKEN?.trim();
+}
+
 /**
  * Metaculus — the forecasting community's own aggregate.
  *
@@ -110,7 +115,7 @@ export const metaculus = defineAdapter({
     "Give search or id. search matches question titles; status defaults to " +
     "open questions only.",
 
-  available: () => Boolean(process.env.METACULUS_API_TOKEN?.trim()),
+  available: () => Boolean(metaculusToken()),
 
   async run(input, signal) {
     const single = Boolean(input.id);
@@ -123,7 +128,7 @@ export const metaculus = defineAdapter({
       url.searchParams.set("order_by", "-hotness");
     }
 
-    const token = process.env.METACULUS_API_TOKEN?.trim();
+    const token = metaculusToken();
     const href = url.toString();
     const body = await getJson<ListResponse | Post>(href, {
       signal,

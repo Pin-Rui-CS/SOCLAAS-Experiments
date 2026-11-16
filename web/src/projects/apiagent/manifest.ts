@@ -3,7 +3,7 @@ import type { ProjectManifest } from "../types";
 export const apiAgentManifest: ProjectManifest = {
   slug: "apiagent",
   name: "API Agent",
-  description: "Research agent over public data APIs",
+  description: "Research agent over 28 public data APIs",
   status: "live",
   path: "web/src/projects/apiagent",
   details:
@@ -19,9 +19,11 @@ export const apiAgentManifest: ProjectManifest = {
     "reported, not that it happened. The agent is told to keep those apart, " +
     "and the turn summary says which tiers an answer actually rests on, " +
     "whether or not the model owned up to it.\n\n" +
-    "Twenty-four APIs are wired up across economics, filings, regulation, " +
+    "Twenty-eight APIs are wired up across economics, filings, regulation, " +
     "health, security, weather, geophysics, markets, prediction markets, " +
-    "software and international statistics. All but one need no key. The " +
+    "software and international statistics, including Treasury fiscal data, " +
+    "hurricane history, tropical outlooks and ENSO conditions. Twenty-six " +
+    "need no key; FRED and Metaculus are available when configured. The " +
     "registry is built to take more without changing anything but itself.",
   load: () => import("./AgentView"),
 };

@@ -443,6 +443,10 @@ function Banner({
  * demonstration of what this project is for.
  */
 const EXAMPLES = [
+  "What is the latest US national debt reported by the Treasury?",
+  "What are the Atlantic tropical cyclone formation chances over the next three weeks?",
+  "What does NOAA say about El Nino conditions and the outlook?",
+  "How many Atlantic named storms formed after mid-October in 2023?",
   "How many US banks failed between January and August 2026?",
   "Was the sky clear over Reykjavík on 12 August 2026?",
   "Has there been reporting on a Putin–Trump phone call recently?",
@@ -488,7 +492,8 @@ function MessageList({
             Ask a question with a checkable answer
           </p>
           <p style={{ fontSize: 13, color: "var(--text-faint)", margin: "6px 0 18px" }}>
-            The agent searches a registry of public data APIs, calls the ones
+            The agent searches 28 public data APIs, including Treasury fiscal
+            data, hurricane history and climate outlooks, calls the ones
             that fit, and answers from what they returned. Sources are labelled
             by tier: A can settle a question, B is evidence only.
           </p>

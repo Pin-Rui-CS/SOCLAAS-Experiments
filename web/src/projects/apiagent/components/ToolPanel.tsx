@@ -87,6 +87,8 @@ type CallOutput = {
   url?: string;
   retrievedAt?: string;
   rowCount?: number;
+  ms?: number;
+  httpStatus?: number | null;
   truncated?: boolean;
   note?: string;
   rows?: unknown[];
@@ -248,6 +250,7 @@ function CallBody({ output }: { output?: CallOutput }) {
     return (
       <div style={{ display: "grid", gap: 6 }}>
         <p style={{ margin: 0, color: "var(--danger)" }}>{output.error}</p>
+        <CallMetrics output={output} />
         {output.problems?.map((problem) => (
           <p key={problem} style={{ margin: 0, color: "var(--text-muted)" }}>
             • {problem}
@@ -269,6 +272,7 @@ function CallBody({ output }: { output?: CallOutput }) {
 
   return (
     <div style={{ display: "grid", gap: 8 }}>
+      <CallMetrics output={output} />
       {/*
         * The provenance line. §3 requires the retrieval URL AND the timestamp
         * for anything below Tier A, and there is no reason to show less for
@@ -329,6 +333,14 @@ function CallBody({ output }: { output?: CallOutput }) {
       )}
     </div>
   );
+}
+
+function CallMetrics({ output }: { output: CallOutput }) {
+  const parts: string[] = [];
+  if (typeof output.ms === "number") parts.push(`${(output.ms / 1000).toFixed(1)}s`);
+  if (typeof output.httpStatus === "number") parts.push(`HTTP ${output.httpStatus}`);
+  if (!parts.length) return null;
+  return <span style={{ color: "var(--text-faint)", fontSize: 11.5 }}>{parts.join(" · ")}</span>;
 }
 
 /**
